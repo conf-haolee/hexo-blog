@@ -1,0 +1,46 @@
+name: Deploy Hexo to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main   # 如果你源码分支是 master，就改成 master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: |
+          npx hexo clean
+          npx hexo generate
+
+      - name: Deploy to username.github.io
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.DEPLOY_KEY }}
+          external_repository: conf-haolee/conf-haolee.github.io
+          publish_branch: main
+          publish_dir: ./public
+          force_orphan: true
