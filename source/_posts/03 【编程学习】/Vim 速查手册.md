@@ -1,5 +1,6 @@
 ---
 title: vim速查手册
+date: 2023-10-15
 tags: 
 -  vim
 categories:

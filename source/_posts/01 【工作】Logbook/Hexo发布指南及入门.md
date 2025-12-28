@@ -1,5 +1,6 @@
 ---
 title: Hexo发布指南及入门
+date: 2023-04-13
 tags: 
 - hexo
 categories:

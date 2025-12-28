@@ -1,5 +1,6 @@
 ---
 title: latex入门手册
+date: 2024-02-02
 tags: 
 - latex
 categories:

@@ -1,5 +1,6 @@
 ---
 title: GPU显卡基础知识介绍
+date: 2023-10-14
 tags: 
 -  
 categories:

@@ -1,6 +1,6 @@
 ---
 title: SSH远程连接快速上手
-date: 2023-10-31 20:38:17     //发表日期
+date: 2023-09-21 20:38:17    
 tags: 
 - SSH
 categories:
