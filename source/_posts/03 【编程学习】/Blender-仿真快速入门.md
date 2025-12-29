@@ -1,5 +1,6 @@
 ---
 title: Blender 仿真快速入门
+date: 2024-09-09
 tags: 
 - 
 categories:

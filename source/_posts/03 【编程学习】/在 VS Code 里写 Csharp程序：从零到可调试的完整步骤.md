@@ -1,5 +1,6 @@
 ---
 title: 在 VS Code 里写 C# 程序：从零到可调试的完整步骤
+date: 2025-12-21
 tags: 
 - C#
 - vscode

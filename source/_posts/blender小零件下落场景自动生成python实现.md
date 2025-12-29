@@ -1,5 +1,6 @@
 ---
 title: blender小零件下落场景构建，以及图片自动生成python实现
+date: 2024-09-27
 pin: true
 tags: 
 - blender

@@ -1,5 +1,6 @@
 ---
 title: Halcon 基础知识
+date: 2024-10-15
 tags: 
 - Volantis
 - hexo 
