@@ -16,7 +16,8 @@ HALCON是德国MVtec公司开发的一套完善的标准的机器**视觉算法�
 
 HDevelop 开发环境的安装：
 
-[HALCON20.11软件 64 破解](https://pan.baidu.com/s/1zaRWtuyo_QDQS_2LU_ko1Q?pwd=lhao)
+[HALCON软件下载地址](https://www.mvtec.com/cn/downloads)
+
 
 ## HDevelop语言特点介绍
 

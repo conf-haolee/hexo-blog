@@ -121,7 +121,7 @@ encrypt: # hexo-blog-encrypt
 ## Docs: https://hexo.io/docs/one-command-deployment
 deploy:
   type: git
-  repo: git@github.com:conf-haolee/conf-haolee.github.io.git
+  repo: https://github.com/conf-haolee/conf-haolee.github.io.git
   # repo: 
   #   gitee: https://gitee.com/haolee426/haoLee426.git
   #   # github: https://github.com/silent426/silent426.github.io.git
