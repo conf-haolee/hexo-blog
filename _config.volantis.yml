@@ -289,6 +289,10 @@ plugins:
 
 ############################### plugins ############################### > end
 
+injects:
+  style:
+    - _style/_custom/hljs-dark
+
 ############################### Search ############################### > start
 # To use hexo search, you need to install the following plugins:
 # npm i hexo-generator-json-content
