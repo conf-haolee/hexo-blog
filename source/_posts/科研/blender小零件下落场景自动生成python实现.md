@@ -6,7 +6,7 @@ tags:
 - blender
 - python
 categories:
-- 学习
+- 科研
 ---
 
 <div align="center">
