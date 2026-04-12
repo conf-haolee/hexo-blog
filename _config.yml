@@ -8,15 +8,15 @@ subtitle: ''
 description: 'haolees blogs'
 keywords:
 author: haolee
-language: en
-timezone: ''
+language: zh-CN
+timezone: 'Asia/Shanghai'
 
 # 网站图标，更多尺寸等图标请使用import方式批量导入
 favicon: https://raw.githubusercontent.com/conf-haolee/Images/master/PicGoImg/202407301054671.ico
 
 # URL
 ## Set your site url here. For example, if you use GitHub Page, set url as 'https://username.github.io/project'
-url: http://example.com
+url: https://conf-haolee.github.io
 permalink: :year/:month/:day/:title/
 permalink_defaults:
 pretty_urls:
@@ -47,8 +47,8 @@ render_drafts: false
 post_asset_folder: true
 relative_link: false
 future: true
-# 开启语法高亮
-syntax_highlighter: highlight.js
+# 开启语法高亮（使用 prismjs，Volantis 主题支持更好）
+syntax_highlighter: prismjs
 highlight:
   enable: false
   line_number: false
@@ -57,10 +57,10 @@ highlight:
   wrap: true
   hljs: false
 prismjs:
-  enable: false
+  enable: true
   preprocess: true
   line_number: true
-  tab_replace: ''
+  tab_replace: '  '
 
 # Home page setting
 # path: Root path for your blogs index page. (default = '')
