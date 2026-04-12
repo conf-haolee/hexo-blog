@@ -276,22 +276,15 @@ plugins:
   busuanzi:
     enable: true
   
-  # # 代码高亮
-  # code_highlight: highlightjs # highlightjs or prismjs
-  # # highlight.js
-  # highlightjs:
-  #   copy_code: true
-  #   # 如果开启以下配置, hexo.config.highlight.enable 需要设置为 false ; hexo.config.highlight.enable 设置为 true, 则以下配置无效
-  #   # # 不再支持 v11.1.0 以下版本
-  #   js: https://unpkg.com/@highlightjs/cdn-assets@11.5.1/highlight.min.js # Please set hexo.config.highlight.enable = false !!!
-  #   css: https://unpkg.com/@highlightjs/cdn-assets@11.5.1/styles/default.min.css
-  #   # # # more: https://www.jsdelivr.com/package/npm/@highlightjs/cdn-assets?path=styles
+  # 代码高亮（与 _config.yml 中 prismjs 对应）
+  code_highlight: prismjs
+  prismjs:
+    copy_code: true
 
 ############################### plugins ############################### > end
 
 injects:
-  style:
-    - _style/_custom/hljs-dark
+  style: []
 
 ############################### Search ############################### > start
 # To use hexo search, you need to install the following plugins:
@@ -371,7 +364,7 @@ article:
       # 相关文章，需要安装插件 (for layout: post)
       # npm i hexo-related-popular-posts
       related_posts:
-        enable: false
+        enable: true
         title: 相关文章
         icon: fa-solid fa-bookmark
         max_count: 5
