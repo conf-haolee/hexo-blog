@@ -1,0 +1,13 @@
+﻿[
+  {
+    "name": "Example vision project",
+    "description": "Replace this record with a real project.",
+    "localPath": "",
+    "nasPath": "/data/projects/example",
+    "gitRepo": "/data/projects/example",
+    "categories": ["source", "documentation"],
+    "created": "2026-07-13",
+    "tags": ["vision", "C#"]
+  }
+]
+

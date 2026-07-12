@@ -1,0 +1,901 @@
+﻿"""Private workboard service.
+
+The service is designed to run behind a reverse proxy and an identity-aware
+proxy such as Cloudflare Access. It deliberately does not expose arbitrary
+filesystem browsing or local desktop actions.
+"""
+
+import json
+import os
+import re
+import sqlite3
+from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib import request as urllib_request
+
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
+
+try:
+    from git import Repo
+
+    GIT_AVAILABLE = True
+except ImportError:
+    Repo = None
+    GIT_AVAILABLE = False
+
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+DATA_DIR = Path(os.environ.get("WORKBOARD_DATA_DIR", BASE_DIR / "data")).resolve()
+DB_PATH = Path(os.environ.get("WORKBOARD_DB", DATA_DIR / "workboard.sqlite3")).resolve()
+DOCS_DIR = Path(os.environ.get("WORKBOARD_DOCS_DIR", DATA_DIR / "docs")).resolve()
+TODO_DIR = DOCS_DIR / "TODO"
+DONE_DIR = DOCS_DIR / "Done"
+PROJECTS_IMPORT_FILE = Path(
+    os.environ.get("WORKBOARD_PROJECTS_FILE", DATA_DIR / "projects.json")
+).resolve()
+AI_SETTINGS_FILE = DATA_DIR / "ai_settings.json"
+
+MAX_TODO_ITEMS = 12
+VISIBLE_TODO_ITEMS = 6
+TODO_MARKDOWN_FILE = "TODO.md"
+DEFAULT_AI_SETTINGS = {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "",
+}
+
+app = Flask(__name__, static_folder=str(STATIC_DIR))
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+
+def env_list(name, defaults=()):
+    value = os.environ.get(name)
+    if value is None:
+        return set(defaults)
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+AUTH_MODE = os.environ.get("WORKBOARD_AUTH_MODE", "local").lower()
+ALLOWED_EMAILS = env_list("WORKBOARD_ALLOWED_EMAILS")
+ALLOWED_ORIGINS = env_list(
+    "WORKBOARD_ALLOWED_ORIGINS",
+    {"http://localhost:5000", "http://127.0.0.1:5000"},
+)
+
+
+def ensure_storage():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    TODO_DIR.mkdir(parents=True, exist_ok=True)
+    DONE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_db():
+    if "db" not in g:
+        ensure_storage()
+        connection = sqlite3.connect(str(DB_PATH))
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        g.db = connection
+        init_db(connection)
+    return g.db
+
+
+def init_db(connection):
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            description TEXT NOT NULL DEFAULT '',
+            local_path TEXT NOT NULL DEFAULT '',
+            nas_path TEXT NOT NULL DEFAULT '',
+            git_repo TEXT NOT NULL DEFAULT '',
+            categories_json TEXT NOT NULL DEFAULT '[]',
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            created TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_no INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            project_id INTEGER,
+            project_name TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            due_at TEXT,
+            progress INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'todo',
+            folder_name TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+    connection.commit()
+    import_projects_if_needed(connection)
+
+
+def import_projects_if_needed(connection):
+    count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+    if count or not PROJECTS_IMPORT_FILE.exists():
+        return
+    try:
+        records = json.loads(PROJECTS_IMPORT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(records, list):
+        return
+    for record in records:
+        try:
+            payload = normalize_project_payload(record, [], allow_duplicate=False)
+            connection.execute(
+                """
+                INSERT INTO projects
+                (name, description, local_path, nas_path, git_repo,
+                 categories_json, tags_json, created)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                project_values(payload),
+            )
+        except (ValueError, sqlite3.IntegrityError):
+            continue
+    connection.commit()
+
+
+@app.teardown_appcontext
+def close_db(_error=None):
+    connection = g.pop("db", None)
+    if connection is not None:
+        connection.close()
+
+
+@app.before_request
+def enforce_access_boundary():
+    if AUTH_MODE == "cloudflare" and request.path != "/api/health":
+        email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
+        allowed = {item.lower() for item in ALLOWED_EMAILS}
+        if not email:
+            return jsonify({"error": "Authentication required"}), 401
+        if allowed and email not in allowed:
+            return jsonify({"error": "Access denied"}), 403
+
+    if request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+        origin = request.headers.get("Origin")
+        if origin and origin not in ALLOWED_ORIGINS:
+            return jsonify({"error": "Origin not allowed"}), 403
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; connect-src 'self'; img-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
+        "script-src 'self'",
+    )
+    return response
+
+
+def json_list(value):
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        parsed = []
+    return parsed if isinstance(parsed, list) else []
+
+
+def normalize_text_list(value):
+    raw_values = value if isinstance(value, list) else str(value or "").split(",")
+    result = []
+    seen = set()
+    for raw_value in raw_values:
+        item = str(raw_value).strip()
+        if item and item.lower() not in seen:
+            result.append(item)
+            seen.add(item.lower())
+    return result
+
+
+def validate_date(value):
+    try:
+        return datetime.strptime(str(value or ""), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("Created date must be in YYYY-MM-DD format") from exc
+
+
+def project_values(project):
+    return (
+        project["name"],
+        project["description"],
+        project["localPath"],
+        project["nasPath"],
+        project["gitRepo"],
+        json.dumps(project["categories"], ensure_ascii=False),
+        json.dumps(project["tags"], ensure_ascii=False),
+        project["created"],
+    )
+
+
+def normalize_project_payload(payload, existing_projects, allow_duplicate=True):
+    name = str(payload.get("name") or "").strip()
+    local_path = str(payload.get("localPath") or "").strip()
+    nas_path = str(payload.get("nasPath") or "").strip()
+    git_repo = str(payload.get("gitRepo") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    if not name:
+        raise ValueError("Project name is required")
+    if not local_path and not nas_path:
+        raise ValueError("A local path or NAS path is required")
+    duplicate = (
+        allow_duplicate
+        and name.lower()
+        in {str(project.get("name", "")).strip().lower() for project in existing_projects}
+    )
+    if duplicate:
+        raise ValueError("Project name already exists")
+    return {
+        "name": name,
+        "description": description,
+        "localPath": local_path,
+        "nasPath": nas_path,
+        "gitRepo": git_repo,
+        "categories": normalize_text_list(payload.get("categories")),
+        "created": validate_date(
+            payload.get("created") or datetime.now().strftime("%Y-%m-%d")
+        ),
+        "tags": normalize_text_list(payload.get("tags")),
+    }
+
+
+def row_to_project(row):
+    local_path = row["local_path"]
+    nas_path = row["nas_path"]
+    local_exists = bool(local_path and Path(local_path).exists())
+    nas_exists = bool(nas_path and Path(nas_path).exists())
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "categories": json_list(row["categories_json"]),
+        "tags": json_list(row["tags_json"]),
+        "created": row["created"],
+        "gitInfo": get_git_info(row["git_repo"]),
+        "pathStatus": {
+            "localExists": local_exists,
+            "nasExists": nas_exists,
+            "recommendedPath": "nas" if nas_exists else ("local" if local_exists else None),
+        },
+        "pathLabel": "NAS path configured" if nas_path else "Local path configured",
+    }
+
+
+def load_project_rows():
+    return get_db().execute("SELECT * FROM projects ORDER BY id").fetchall()
+
+
+def load_projects():
+    return [row_to_internal_project(row) for row in load_project_rows()]
+
+
+def row_to_internal_project(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "localPath": row["local_path"],
+        "nasPath": row["nas_path"],
+        "gitRepo": row["git_repo"],
+        "categories": json_list(row["categories_json"]),
+        "tags": json_list(row["tags_json"]),
+        "created": row["created"],
+    }
+
+
+def enrich_projects():
+    projects = [row_to_project(row) for row in load_project_rows()]
+    projects.sort(
+        key=lambda item: (item["gitInfo"] or {}).get("last_commit", {}).get("date", ""),
+        reverse=True,
+    )
+    return projects
+
+
+def get_git_info(repo_path):
+    if not GIT_AVAILABLE or not repo_path or not Path(repo_path).exists():
+        return None
+    try:
+        repo = Repo(repo_path)
+        commits = []
+        for commit in repo.iter_commits(max_count=10):
+            committed_at = commit.committed_datetime.replace(tzinfo=None)
+            commits.append(
+                {
+                    "hash": commit.hexsha[:7],
+                    "message": commit.message.strip().splitlines()[0] if commit.message else "",
+                    "author": str(commit.author),
+                    "date": committed_at.isoformat(timespec="seconds"),
+                    "relative_date": relative_time(committed_at),
+                }
+            )
+        if not commits:
+            return None
+        return {
+            "branch": repo.active_branch.name if not repo.head.is_detached else "detached",
+            "has_changes": repo.is_dirty(untracked_files=True),
+            "last_commit": commits[0],
+            "commits": commits,
+        }
+    except Exception as exc:
+        print(f"Git metadata unavailable for {repo_path}: {exc}")
+        return None
+
+
+def relative_time(value):
+    diff = datetime.now() - value
+    seconds = max(diff.total_seconds(), 0)
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        minutes = int(seconds // 60)
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    if seconds < 86400:
+        hours = int(seconds // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(seconds // 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def validate_due_at(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).isoformat(timespec="minutes")
+    except ValueError as exc:
+        raise ValueError("Due time must be in YYYY-MM-DDTHH:MM format") from exc
+
+
+def validate_progress(value, default=0):
+    try:
+        progress = default if value in (None, "") else int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Progress must be one of 0, 20, 40, 60, 80, 100") from exc
+    if progress not in {0, 20, 40, 60, 80, 100}:
+        raise ValueError("Progress must be one of 0, 20, 40, 60, 80, 100")
+    return progress
+
+
+def sanitize_task_name(name):
+    value = re.sub(r'[<>:"/\\|?*]+', " ", str(name or "").strip())
+    value = re.sub(r"\s+", " ", value).strip().rstrip(".")
+    return (value or "Untitled Task")[:80]
+
+
+def safe_folder_name(base_dir, preferred_name, current_name=None):
+    candidate = preferred_name
+    index = 2
+    while True:
+        if candidate == current_name or not (base_dir / candidate).exists():
+            return candidate
+        candidate = f"{preferred_name} ({index})"
+        index += 1
+
+
+def todo_folder(item):
+    base = DONE_DIR if item["status"] == "done" else TODO_DIR
+    return base / item["folderName"]
+
+
+def todo_row_to_dict(row):
+    item = {
+        "id": row["id"],
+        "orderNo": row["order_no"],
+        "name": row["name"],
+        "projectId": row["project_id"],
+        "projectName": row["project_name"] or "Temporary work",
+        "createdAt": row["created_at"],
+        "completedAt": row["completed_at"],
+        "dueAt": row["due_at"],
+        "progress": row["progress"],
+        "status": row["status"],
+        "folderName": row["folder_name"],
+    }
+    item["todoMarkdownExists"] = (todo_folder(item) / TODO_MARKDOWN_FILE).exists()
+    return item
+
+
+def load_todos():
+    rows = get_db().execute("SELECT * FROM todos ORDER BY order_no").fetchall()
+    items = [todo_row_to_dict(row) for row in rows]
+    return {
+        "todo": [item for item in items if item["status"] != "done"],
+        "done": [item for item in items if item["status"] == "done"],
+        "limits": {"visibleTodoItems": VISIBLE_TODO_ITEMS, "maxTodoItems": MAX_TODO_ITEMS},
+    }
+
+
+def find_todo(todo_id):
+    row = get_db().execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return row_to_mutable_todo(row) if row else None
+
+
+def row_to_mutable_todo(row):
+    return {
+        "id": row["id"],
+        "orderNo": row["order_no"],
+        "name": row["name"],
+        "projectId": row["project_id"],
+        "projectName": row["project_name"],
+        "createdAt": row["created_at"],
+        "completedAt": row["completed_at"],
+        "dueAt": row["due_at"],
+        "progress": row["progress"],
+        "status": row["status"],
+        "folderName": row["folder_name"],
+    }
+
+
+def save_todo(item):
+    get_db().execute(
+        """
+        UPDATE todos SET order_no=?, name=?, project_id=?, project_name=?, created_at=?,
+        completed_at=?, due_at=?, progress=?, status=?, folder_name=? WHERE id=?
+        """,
+        (
+            item["orderNo"],
+            item["name"],
+            item["projectId"],
+            item["projectName"],
+            item["createdAt"],
+            item["completedAt"],
+            item["dueAt"],
+            item["progress"],
+            item["status"],
+            item["folderName"],
+            item["id"],
+        ),
+    )
+    get_db().commit()
+
+
+def todo_markdown(item):
+    status = "done" if item["status"] == "done" else "todo"
+    return "\n".join(
+        [
+            f"# {item['name']}",
+            "",
+            f"- Status: {status}",
+            f"- Progress: {item['progress']}%",
+            f"- Project: {item['projectName'] or 'Temporary work'}",
+            f"- Created: {item['createdAt']}",
+            f"- Due: {item['dueAt'] or 'Not set'}",
+            f"- Completed: {item['completedAt'] or 'Not completed'}",
+            "",
+            "## Notes",
+            "",
+            "Add progress notes, evidence, screenshots and delivery details here.",
+            "",
+        ]
+    )
+
+
+def sync_todo_markdown(item):
+    folder = todo_folder(item)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / TODO_MARKDOWN_FILE).write_text(todo_markdown(item), encoding="utf-8")
+
+
+def serialize_todo(item):
+    result = dict(item)
+    result["todoMarkdownExists"] = (todo_folder(item) / TODO_MARKDOWN_FILE).exists()
+    return result
+
+
+def setting_get(key, default=None):
+    row = get_db().execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return default if row is None else row["value"]
+
+
+def setting_set(key, value):
+    get_db().execute(
+        "INSERT INTO settings(key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    get_db().commit()
+
+
+def load_ai_settings():
+    raw = setting_get("ai", "")
+    if raw:
+        try:
+            value = json.loads(raw)
+            if isinstance(value, dict):
+                return {**DEFAULT_AI_SETTINGS, **value}
+        except json.JSONDecodeError:
+            pass
+    if AI_SETTINGS_FILE.exists():
+        try:
+            value = json.loads(AI_SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                return {**DEFAULT_AI_SETTINGS, **value}
+        except (OSError, json.JSONDecodeError):
+            pass
+    return dict(DEFAULT_AI_SETTINGS)
+
+
+def save_ai_settings(settings):
+    safe = {key: settings.get(key, DEFAULT_AI_SETTINGS[key]) for key in DEFAULT_AI_SETTINGS}
+    setting_set("ai", json.dumps(safe, ensure_ascii=False))
+
+
+def serialize_ai_settings(settings):
+    key = settings.get("apiKey", "")
+    return {
+        "provider": settings.get("provider", "deepseek"),
+        "model": settings.get("model", "deepseek-chat"),
+        "baseUrl": settings.get("baseUrl", DEFAULT_AI_SETTINGS["baseUrl"]),
+        "hasApiKey": bool(key),
+        "keyPreview": f"{key[:3]}...{key[-3:]}" if len(key) >= 8 else "",
+    }
+
+
+def normalize_ai_payload(payload, existing):
+    api_key = str(payload.get("apiKey") or "").strip() or existing.get("apiKey", "")
+    base_url = str(payload.get("baseUrl") or DEFAULT_AI_SETTINGS["baseUrl"]).strip()
+    if not base_url.startswith("https://"):
+        raise ValueError("AI base URL must use HTTPS")
+    return {
+        "provider": "deepseek",
+        "model": str(payload.get("model") or DEFAULT_AI_SETTINGS["model"]).strip(),
+        "baseUrl": base_url.rstrip("/"),
+        "apiKey": api_key,
+    }
+
+
+def resolve_period(period):
+    now = datetime.now()
+    if period == "week":
+        start = now - timedelta(days=now.weekday())
+        title = "This week"
+    elif period == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        title = "Today"
+    else:
+        raise ValueError("Period must be today or week")
+    return start, now, title
+
+
+def build_summary_context(period):
+    start, end, title = resolve_period(period)
+    todos = load_todos()
+    pending = todos["todo"]
+    done = [
+        item for item in todos["done"]
+        if item.get("completedAt") and item["completedAt"] >= start.isoformat()
+    ]
+    projects = enrich_projects()
+    return {
+        "period": period,
+        "title": title,
+        "range": {
+            "start": start.isoformat(timespec="minutes"),
+            "end": end.isoformat(timespec="minutes"),
+        },
+        "stats": {
+            "pendingTodos": len(pending),
+            "completedTodos": len(done),
+            "projects": len(projects),
+        },
+        "basis": [
+            f"Pending tasks: {len(pending)}",
+            f"Completed tasks in period: {len(done)}",
+            f"Tracked projects: {len(projects)}",
+        ],
+    }
+
+
+def request_summary(settings, context):
+    if not settings.get("apiKey"):
+        raise ValueError("Configure the AI API key on the server before generating a summary")
+    payload = {
+        "model": settings.get("model", "deepseek-chat"),
+        "messages": [
+            {"role": "system", "content": "Summarize work progress clearly and concisely."},
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ],
+        "temperature": 0.2,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        settings["baseUrl"] + "/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings['apiKey']}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=45) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"AI request failed: {exc}") from exc
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("AI provider returned an invalid response") from exc
+
+
+@app.route("/")
+def serve_index():
+    return send_from_directory(str(STATIC_DIR), "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    return send_from_directory(str(STATIC_DIR), path)
+
+
+@app.route("/api/projects", methods=["GET"])
+def get_projects():
+    return jsonify(enrich_projects())
+
+
+@app.route("/api/projects", methods=["POST"])
+def create_project():
+    payload = request.get_json(silent=True) or {}
+    existing = load_projects()
+    try:
+        project = normalize_project_payload(payload, existing)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        cursor = get_db().execute(
+            """
+            INSERT INTO projects
+            (name, description, local_path, nas_path, git_repo, categories_json, tags_json, created)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            project_values(project),
+        )
+        get_db().commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Project name already exists"}), 400
+    row = get_db().execute("SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return jsonify({"success": True, "item": row_to_project(row)})
+
+
+@app.route("/api/settings/ai", methods=["GET"])
+def get_ai_settings():
+    return jsonify(serialize_ai_settings(load_ai_settings()))
+
+
+@app.route("/api/settings/ai", methods=["POST"])
+def update_ai_settings():
+    try:
+        settings = normalize_ai_payload(request.get_json(silent=True) or {}, load_ai_settings())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    save_ai_settings(settings)
+    return jsonify({"success": True, "settings": serialize_ai_settings(settings)})
+
+
+@app.route("/api/project/<int:project_id>/open")
+def project_open_removed(project_id):
+    return jsonify({"error": "Local folder opening is disabled in remote mode"}), 410
+
+
+@app.route("/api/folder/select", methods=["POST"])
+def folder_select_removed():
+    return jsonify({"error": "Remote folder selection is disabled"}), 410
+
+
+@app.route("/api/todos", methods=["GET"])
+def get_todos():
+    return jsonify(load_todos())
+
+
+@app.route("/api/todos", methods=["POST"])
+def create_todo():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Task name is required"}), 400
+    try:
+        due_at = validate_due_at(payload.get("dueAt"))
+        progress = validate_progress(payload.get("progress"), default=0)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    project_id = payload.get("projectId")
+    project = None
+    if project_id not in (None, ""):
+        try:
+            project_id = int(project_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "A valid project must be selected"}), 400
+        project = next((item for item in load_projects() if item["id"] == project_id), None)
+        if project is None:
+            return jsonify({"error": "Project not found"}), 404
+    else:
+        project_id = None
+
+    db = get_db()
+    pending = db.execute("SELECT COUNT(*) FROM todos WHERE status != 'done'").fetchone()[0]
+    if pending >= MAX_TODO_ITEMS:
+        return jsonify({"error": f"Todo list is full. Maximum {MAX_TODO_ITEMS} pending tasks."}), 400
+    folder_name = safe_folder_name(TODO_DIR, sanitize_task_name(name))
+    now = datetime.now().isoformat(timespec="seconds")
+    cursor = db.execute(
+        """
+        INSERT INTO todos
+        (order_no, name, project_id, project_name, created_at, due_at, progress, status, folder_name)
+        VALUES ((SELECT COALESCE(MAX(order_no), 0) + 1 FROM todos), ?, ?, ?, ?, ?, ?, 'todo', ?)
+        """,
+        (
+            name,
+            project_id,
+            project["name"] if project else "Temporary work",
+            now,
+            due_at,
+            progress,
+            folder_name,
+        ),
+    )
+    db.commit()
+    item = find_todo(cursor.lastrowid)
+    sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["PATCH"])
+def rename_todo(todo_id):
+    payload = request.get_json(silent=True) or {}
+    item = find_todo(todo_id)
+    name = str(payload.get("name") or "").strip()
+    if item is None:
+        return jsonify({"error": "Todo item not found"}), 404
+    if not name:
+        return jsonify({"error": "Task name is required"}), 400
+    try:
+        item["dueAt"] = validate_due_at(payload.get("dueAt"))
+        item["progress"] = validate_progress(payload.get("progress"), default=item["progress"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    old_folder = todo_folder(item)
+    item["name"] = name
+    item["folderName"] = safe_folder_name(
+        DONE_DIR if item["status"] == "done" else TODO_DIR,
+        sanitize_task_name(name),
+        current_name=item["folderName"],
+    )
+    new_folder = todo_folder(item)
+    if old_folder != new_folder and old_folder.exists():
+        old_folder.rename(new_folder)
+    save_todo(item)
+    sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/todos/<int:todo_id>/progress", methods=["PATCH"])
+def update_todo_progress(todo_id):
+    item = find_todo(todo_id)
+    if item is None:
+        return jsonify({"error": "Todo item not found"}), 404
+    try:
+        payload = request.get_json(silent=True) or {}
+        item["progress"] = validate_progress(payload.get("progress"), default=item["progress"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    save_todo(item)
+    sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/todos/<int:todo_id>/complete", methods=["POST"])
+def complete_todo(todo_id):
+    item = find_todo(todo_id)
+    if item is None:
+        return jsonify({"error": "Todo item not found"}), 404
+    if item["status"] != "done":
+        source = todo_folder(item)
+        item["status"] = "done"
+        item["completedAt"] = datetime.now().isoformat(timespec="seconds")
+        item["progress"] = 100
+        item["folderName"] = safe_folder_name(DONE_DIR, item["folderName"])
+        target = todo_folder(item)
+        if source.exists() and source != target:
+            source.rename(target)
+        save_todo(item)
+        sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/todos/<int:todo_id>/open")
+def open_todo_removed(todo_id):
+    return jsonify({"error": "Desktop folder opening is disabled in remote mode"}), 410
+
+
+@app.route("/api/todos/<int:todo_id>/document")
+def todo_document(todo_id):
+    item = find_todo(todo_id)
+    if item is None:
+        return jsonify({"error": "Todo item not found"}), 404
+    sync_todo_markdown(item)
+    return send_file(todo_folder(item) / TODO_MARKDOWN_FILE, mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/api/contributions")
+def get_contributions():
+    if not GIT_AVAILABLE:
+        return jsonify({})
+    cutoff = datetime.now() - timedelta(days=365)
+    daily_counts = defaultdict(int)
+    for project in load_projects():
+        repo_path = project.get("gitRepo")
+        if not repo_path or not Path(repo_path).exists():
+            continue
+        try:
+            repo = Repo(repo_path)
+            for commit in repo.iter_commits(max_count=5000):
+                committed_at = commit.committed_datetime.replace(tzinfo=None)
+                if committed_at < cutoff:
+                    break
+                daily_counts[committed_at.strftime("%Y-%m-%d")] += 1
+        except Exception as exc:
+            print(f"Heatmap: error reading {repo_path}: {exc}")
+    return jsonify(dict(daily_counts))
+
+
+@app.route("/api/summary/context")
+def get_summary_context():
+    try:
+        return jsonify(build_summary_context(request.args.get("period", "today")))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/summary/generate", methods=["POST"])
+def generate_summary():
+    period = (request.get_json(silent=True) or {}).get("period", "today")
+    try:
+        context = build_summary_context(period)
+        summary = request_summary(load_ai_settings(), context)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify(
+        {
+            **context,
+            "success": True,
+            "summary": summary,
+            "generatedAt": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+
+
+@app.route("/api/health")
+def health_check():
+    get_db()
+    return jsonify({"status": "ok", "git_available": GIT_AVAILABLE, "storage": "sqlite"})
+
+
+if __name__ == "__main__":
+    ensure_storage()
+    host = os.environ.get("WORKBOARD_HOST", "127.0.0.1")
+    port = int(os.environ.get("WORKBOARD_PORT", "5000"))
+    app.run(host=host, port=port, debug=False)
+

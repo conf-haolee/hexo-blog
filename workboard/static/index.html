@@ -1,0 +1,145 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="workboard-base-path" content="/workboard">
+    <title>私人工作面板</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">PRIVATE WORKSPACE</p>
+                <h1>工作沉淀面板</h1>
+                <p class="muted">项目、任务、Git 活动与复盘记录集中在一个入口。</p>
+            </div>
+            <div class="top-actions">
+                <a class="button ghost" href="/">返回公开博客</a>
+                <button class="button primary" id="refreshButton" type="button">刷新数据</button>
+            </div>
+        </header>
+
+        <main>
+            <section class="hero-grid">
+                <article class="hero-card">
+                    <div class="hero-card-head">
+                        <span class="status-dot" id="serverStatusDot"></span>
+                        <span id="serverStatus">检查服务状态...</span>
+                    </div>
+                    <p class="hero-number" id="projectCount">0</p>
+                    <p class="muted">已跟踪项目</p>
+                </article>
+                <article class="hero-card accent">
+                    <p class="hero-number" id="todoCount">0</p>
+                    <p class="muted">待处理任务</p>
+                    <div class="progress-line"><span id="todoProgress"></span></div>
+                </article>
+                <article class="hero-card">
+                    <p class="hero-number" id="commitCount">0</p>
+                    <p class="muted">近一年提交记录</p>
+                    <p class="small muted" id="lastUpdated">--</p>
+                </article>
+            </section>
+
+            <section class="toolbar panel">
+                <div>
+                    <p class="eyebrow">QUICK FIND</p>
+                    <label class="search">
+                        <span aria-hidden="true">⌕</span>
+                        <input id="searchInput" type="search" placeholder="搜索项目、标签、分类或描述">
+                    </label>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="button ghost" id="summaryToday" type="button">今日总结</button>
+                    <button class="button primary" id="summaryWeek" type="button">本周总结</button>
+                </div>
+            </section>
+
+            <section class="content-grid">
+                <div class="main-column">
+                    <section class="panel">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">ACTIVITY</p>
+                                <h2>提交热力图</h2>
+                            </div>
+                            <span class="muted small">最近 365 天</span>
+                        </div>
+                        <div id="heatmap" class="heatmap" aria-label="提交热力图"></div>
+                    </section>
+
+                    <section class="panel">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">PROJECTS</p>
+                                <h2>项目索引</h2>
+                            </div>
+                            <span class="muted small" id="projectResultCount">0 个结果</span>
+                        </div>
+                        <div id="projects" class="project-grid"></div>
+                    </section>
+                </div>
+
+                <aside class="side-column">
+                    <section class="panel">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">TODO</p>
+                                <h2>当前任务</h2>
+                            </div>
+                            <span class="muted small" id="todoLimit">0 / 12</span>
+                        </div>
+                        <form id="todoForm" class="stack-form">
+                            <input id="todoName" required maxlength="120" placeholder="添加一个待办任务">
+                            <div class="form-row">
+                                <select id="todoProject">
+                                    <option value="">临时工作</option>
+                                </select>
+                                <input id="todoDue" type="datetime-local" aria-label="截止时间">
+                            </div>
+                            <button class="button primary full" type="submit">添加任务</button>
+                        </form>
+                        <div id="todos" class="todo-list"></div>
+                    </section>
+
+                    <section class="panel">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">CAPTURE</p>
+                                <h2>新增项目</h2>
+                            </div>
+                        </div>
+                        <form id="projectForm" class="stack-form">
+                            <input id="projectName" required maxlength="120" placeholder="项目名称">
+                            <input id="projectNasPath" placeholder="NAS 路径">
+                            <input id="projectLocalPath" placeholder="本地路径（可选）">
+                            <input id="projectGitRepo" placeholder="Git 仓库路径（可选）">
+                            <div class="form-row">
+                                <input id="projectCreated" required type="date">
+                                <input id="projectTags" placeholder="标签，用逗号分隔">
+                            </div>
+                            <input id="projectCategories" placeholder="分类，用逗号分隔">
+                            <textarea id="projectDescription" rows="3" placeholder="项目描述"></textarea>
+                            <button class="button primary full" type="submit">保存项目</button>
+                        </form>
+                    </section>
+                </aside>
+            </section>
+        </main>
+
+        <div id="notice" class="notice" role="status" aria-live="polite"></div>
+        <dialog id="summaryDialog">
+            <div class="dialog-head">
+                <h2 id="summaryTitle">工作总结</h2>
+                <button class="icon-button" id="closeSummary" type="button" aria-label="关闭">×</button>
+            </div>
+            <p class="muted" id="summaryMeta"></p>
+            <div id="summaryContent" class="summary-content">正在生成...</div>
+        </dialog>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
+

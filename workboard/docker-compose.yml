@@ -1,0 +1,24 @@
+﻿services:
+  workboard:
+    build: .
+    container_name: workboard
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      WORKBOARD_HOST: 0.0.0.0
+      WORKBOARD_PORT: 5000
+      WORKBOARD_AUTH_MODE: cloudflare
+      WORKBOARD_ALLOWED_EMAILS: ${WORKBOARD_ALLOWED_EMAILS}
+      WORKBOARD_ALLOWED_ORIGINS: https://www.cvhao.top
+      WORKBOARD_DATA_DIR: /app/data
+      WORKBOARD_DOCS_DIR: /app/data/docs
+    volumes:
+      - ${WORKBOARD_DATA_HOST_PATH:-./data}:/app/data
+      - ${WORKBOARD_PROJECTS_HOST_PATH:-./projects}:/app/projects:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
