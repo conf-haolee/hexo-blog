@@ -1,0 +1,41 @@
+:root {
+    color-scheme: dark;
+    font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    background: #0c1518;
+    color: #ecf4ec;
+}
+
+* { box-sizing: border-box; }
+
+body.login-page {
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+        radial-gradient(circle at 12% 20%, rgba(255, 196, 79, 0.14), transparent 28rem),
+        radial-gradient(circle at 90% 80%, rgba(72, 198, 160, 0.14), transparent 28rem),
+        #0c1518;
+}
+
+.login-card {
+    width: min(100%, 430px);
+    padding: 42px;
+    border: 1px solid rgba(202, 224, 206, 0.16);
+    border-radius: 20px;
+    background: rgba(18, 31, 33, 0.95);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.login-kicker { margin: 0 0 10px; color: #f8c655; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; }
+.login-card h1 { margin: 0; font-size: 30px; }
+.login-copy { margin: 12px 0 28px; color: #b8c8c2; line-height: 1.7; }
+.login-form { display: grid; gap: 10px; }
+.login-form label { font-size: 14px; color: #d0ddd5; }
+.login-form input { width: 100%; padding: 13px 14px; border: 1px solid #41544c; border-radius: 9px; background: #0d1718; color: inherit; font: inherit; }
+.login-form input:focus { outline: 2px solid #f8c655; outline-offset: 2px; }
+.login-form button { margin-top: 12px; padding: 13px 16px; border: 0; border-radius: 9px; background: #f8c655; color: #182019; font: inherit; font-weight: 700; cursor: pointer; }
+.login-error { padding: 10px 12px; border-left: 3px solid #ee7a6b; background: rgba(238, 122, 107, 0.12); color: #ffc3bb; font-size: 14px; line-height: 1.5; }
+
+@media (max-width: 480px) { .login-card { padding: 30px 24px; } }

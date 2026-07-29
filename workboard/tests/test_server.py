@@ -16,8 +16,8 @@ class WorkboardApiTests(unittest.TestCase):
         server.TODO_DIR = server.DOCS_DIR / "TODO"
         server.DONE_DIR = server.DOCS_DIR / "Done"
         server.PROJECTS_IMPORT_FILE = root / "missing-projects.json"
-        server.AUTH_MODE = "local"
-        server.ALLOWED_EMAILS = set()
+        server.AUTH_MODE = "cloudflare"
+        server.ALLOWED_EMAILS = {"owner@example.com"}
         server.ALLOWED_ORIGINS = {"http://localhost:5000"}
         server.app.config.update(TESTING=True)
         self.client = server.app.test_client()
@@ -32,6 +32,7 @@ class WorkboardApiTests(unittest.TestCase):
         self.assertNotIn("todo_workspace", response.json)
 
     def test_project_and_todo_flow_hides_paths(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
         project_dir = Path(self.temp_dir.name) / "project"
         project_dir.mkdir()
         response = self.client.post(
@@ -44,6 +45,7 @@ class WorkboardApiTests(unittest.TestCase):
                 "tags": "vision, C#",
                 "categories": "source",
             },
+            headers=access_headers,
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("nasPath", response.json["item"])
@@ -52,27 +54,32 @@ class WorkboardApiTests(unittest.TestCase):
         response = self.client.post(
             "/api/todos",
             json={"name": "Write project review", "projectId": 1},
+            headers=access_headers,
         )
         self.assertEqual(response.status_code, 200)
         todo_id = response.json["item"]["id"]
 
-        response = self.client.get("/api/todos/%s/document" % todo_id)
+        response = self.client.get("/api/todos/%s/document" % todo_id, headers=access_headers)
         self.assertEqual(response.status_code, 200)
         self.assertIn("Write project review", response.get_data(as_text=True))
+        response.close()
 
-        response = self.client.get("/api/todos/%s/open" % todo_id)
+        response = self.client.get("/api/todos/%s/open" % todo_id, headers=access_headers)
         self.assertEqual(response.status_code, 410)
 
     def test_cloudflare_mode_requires_identity_header(self):
         server.AUTH_MODE = "cloudflare"
         server.ALLOWED_EMAILS = {"owner@example.com"}
 
-        self.assertEqual(self.client.get("/").status_code, 401)
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 401)
+        response.close()
         response = self.client.get(
             "/",
             headers={"Cf-Access-Authenticated-User-Email": "owner@example.com"},
         )
         self.assertEqual(response.status_code, 200)
+        response.close()
 
 
 if __name__ == "__main__":

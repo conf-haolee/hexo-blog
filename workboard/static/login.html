@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录工作面板</title>
+    <link rel="stylesheet" href="/login.css">
+</head>
+<body class="login-page">
+    <main class="login-card">
+        <p class="login-kicker">PRIVATE WORKSPACE</p>
+        <h1>工作沉淀面板</h1>
+        <p class="login-copy">输入你的独立密码，进入私人工作信息库。</p>
+        {% if error %}
+        <p class="login-error" role="alert">密码错误、请求无效，或登录次数过多。请稍后再试。</p>
+        {% endif %}
+        <form method="post" action="/login" class="login-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="password">登录密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+            <button type="submit">进入工作面板</button>
+        </form>
+    </main>
+</body>
+</html>

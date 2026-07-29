@@ -8,13 +8,26 @@ filesystem browsing or local desktop actions.
 import json
 import os
 import re
+import secrets
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib import request as urllib_request
 
-from flask import Flask, g, jsonify, request, send_file, send_from_directory
+from flask import (
+    Flask,
+    g,
+    jsonify,
+    redirect,
+    render_template_string,
+    request,
+    send_file,
+    send_from_directory,
+    session,
+    url_for,
+)
+from werkzeug.security import check_password_hash
 
 try:
     from git import Repo
@@ -58,11 +71,28 @@ def env_list(name, defaults=()):
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-AUTH_MODE = os.environ.get("WORKBOARD_AUTH_MODE", "local").lower()
+AUTH_MODE = os.environ.get("WORKBOARD_AUTH_MODE", "password").lower()
 ALLOWED_EMAILS = env_list("WORKBOARD_ALLOWED_EMAILS")
 ALLOWED_ORIGINS = env_list(
     "WORKBOARD_ALLOWED_ORIGINS",
     {"http://localhost:5000", "http://127.0.0.1:5000"},
+)
+PASSWORD_HASH = os.environ.get("WORKBOARD_PASSWORD_HASH", "")
+SESSION_SECRET = os.environ.get("WORKBOARD_SESSION_SECRET", "")
+MAX_LOGIN_FAILURES = int(os.environ.get("WORKBOARD_MAX_LOGIN_FAILURES", "5"))
+LOGIN_WINDOW = timedelta(minutes=int(os.environ.get("WORKBOARD_LOGIN_WINDOW_MINUTES", "15")))
+LOGIN_FAILURES = defaultdict(list)
+PUBLIC_PATHS = {"/api/health", "/login", "/login.css"}
+
+if SESSION_SECRET:
+    app.secret_key = SESSION_SECRET
+
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.environ.get("WORKBOARD_SESSION_COOKIE_SECURE", "true").lower()
+    in {"1", "true", "yes"},
+    SESSION_COOKIE_SAMESITE="Lax",
 )
 
 
@@ -158,7 +188,25 @@ def close_db(_error=None):
 
 @app.before_request
 def enforce_access_boundary():
-    if AUTH_MODE == "cloudflare" and request.path != "/api/health":
+    if request.path == "/api/health":
+        return None
+
+    if AUTH_MODE not in {"password", "cloudflare"}:
+        return configuration_error("Authentication mode is not configured")
+
+    if AUTH_MODE == "password" and not password_auth_is_configured():
+        return configuration_error("Password login is not configured")
+
+    if request.path in PUBLIC_PATHS:
+        return None
+
+    if AUTH_MODE == "password":
+        if not session.get("authenticated"):
+            return authentication_error("Authentication required", 401)
+        if request.method in {"POST", "PATCH", "PUT", "DELETE"} and not valid_csrf_token():
+            return jsonify({"error": "Invalid CSRF token"}), 403
+
+    if AUTH_MODE == "cloudflare":
         email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
         allowed = {item.lower() for item in ALLOWED_EMAILS}
         if not email:
@@ -170,6 +218,63 @@ def enforce_access_boundary():
         origin = request.headers.get("Origin")
         if origin and origin not in ALLOWED_ORIGINS:
             return jsonify({"error": "Origin not allowed"}), 403
+
+
+def password_auth_is_configured():
+    return bool(PASSWORD_HASH and SESSION_SECRET)
+
+
+def is_api_request():
+    return request.path.startswith("/api/")
+
+
+def authentication_error(message, status):
+    if is_api_request():
+        return jsonify({"error": message}), status
+    return redirect(url_for("login"))
+
+
+def configuration_error(message):
+    if is_api_request():
+        return jsonify({"error": message}), 503
+    return message, 503
+
+
+def csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def valid_csrf_token():
+    supplied = request.headers.get("X-CSRF-Token", "") or request.form.get("csrf_token", "")
+    expected = session.get("csrf_token", "")
+    return bool(supplied and expected and secrets.compare_digest(supplied, expected))
+
+
+def login_attempt_key():
+    return request.remote_addr or "unknown"
+
+
+def too_many_login_failures(key):
+    cutoff = datetime.now() - LOGIN_WINDOW
+    attempts = [item for item in LOGIN_FAILURES[key] if item > cutoff]
+    LOGIN_FAILURES[key] = attempts
+    return len(attempts) >= MAX_LOGIN_FAILURES
+
+
+def record_login_failure(key):
+    LOGIN_FAILURES[key].append(datetime.now())
+
+
+def render_login(error=False, status=200):
+    template = (STATIC_DIR / "login.html").read_text(encoding="utf-8")
+    return (
+        render_template_string(template, csrf_token=csrf_token(), error=error),
+        status,
+    )
 
 
 @app.after_request
@@ -638,6 +743,46 @@ def request_summary(settings, context):
         raise RuntimeError("AI provider returned an invalid response") from exc
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if AUTH_MODE != "password":
+        return authentication_error("Password login is not enabled", 404)
+    if request.method == "GET":
+        if session.get("authenticated"):
+            return redirect(url_for("serve_index"))
+        return render_login()
+
+    if not valid_csrf_token():
+        return render_login(error=True, status=400)
+
+    key = login_attempt_key()
+    if too_many_login_failures(key):
+        return render_login(error=True, status=429)
+
+    password = request.form.get("password", "")
+    if not check_password_hash(PASSWORD_HASH, password):
+        record_login_failure(key)
+        return render_login(error=True, status=401)
+
+    LOGIN_FAILURES.pop(key, None)
+    session.clear()
+    session.permanent = True
+    session["authenticated"] = True
+    csrf_token()
+    return redirect(url_for("serve_index"))
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return ("", 204)
+
+
+@app.route("/login.css")
+def login_stylesheet():
+    return send_from_directory(str(STATIC_DIR), "login.css")
+
+
 @app.route("/")
 def serve_index():
     return send_from_directory(str(STATIC_DIR), "index.html")
@@ -646,6 +791,17 @@ def serve_index():
 @app.route("/<path:path>")
 def serve_static(path):
     return send_from_directory(str(STATIC_DIR), path)
+
+
+@app.route("/api/session")
+def get_session():
+    return jsonify(
+        {
+            "authenticated": True,
+            "authMode": AUTH_MODE,
+            "csrfToken": csrf_token() if AUTH_MODE == "password" else None,
+        }
+    )
 
 
 @app.route("/api/projects", methods=["GET"])

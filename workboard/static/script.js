@@ -5,13 +5,20 @@
         this.api = (basePath ? basePath : '') + '/api';
         this.projects = [];
         this.todos = { todo: [], done: [], limits: { maxTodoItems: 12 } };
+        this.csrfToken = null;
         this.noticeTimer = null;
         this.bind();
         this.load();
     }
 
     async request(path, options) {
-        var response = await fetch(this.api + path, options || {});
+        var requestOptions = options || {};
+        var method = (requestOptions.method || 'GET').toUpperCase();
+        var headers = Object.assign({}, requestOptions.headers || {});
+        if (method !== 'GET' && this.csrfToken) {
+            headers['X-CSRF-Token'] = this.csrfToken;
+        }
+        var response = await fetch(this.api + path, Object.assign({}, requestOptions, { headers: headers }));
         var data = {};
         try {
             data = await response.json();
@@ -26,6 +33,7 @@
 
     bind() {
         document.getElementById('refreshButton').addEventListener('click', () => this.load());
+        document.getElementById('logoutButton').addEventListener('click', () => this.logout());
         document.getElementById('searchInput').addEventListener('input', () => this.renderProjects());
         document.getElementById('todoForm').addEventListener('submit', event => {
             event.preventDefault();
@@ -47,14 +55,16 @@
         this.setStatus('正在加载...', false);
         try {
             var results = await Promise.all([
+                this.request('/session'),
                 this.request('/health'),
                 this.request('/projects'),
                 this.request('/todos'),
                 this.request('/contributions')
             ]);
-            this.projects = results[1];
-            this.todos = results[2];
-            this.contributions = results[3] || {};
+            this.csrfToken = results[0].csrfToken || null;
+            this.projects = results[2];
+            this.todos = results[3];
+            this.contributions = results[4] || {};
             this.renderAll();
             this.setStatus('在线', true);
             document.getElementById('lastUpdated').textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
@@ -260,6 +270,20 @@
             content.textContent = result.summary;
         } catch (error) {
             content.textContent = error.message;
+        }
+    }
+
+    async logout() {
+        try {
+            var response = await fetch('/logout', {
+                method: 'POST',
+                headers: this.csrfToken ? { 'X-CSRF-Token': this.csrfToken } : {}
+            });
+            if (!response.ok) {
+                throw new Error('退出登录失败');
+            }
+        } finally {
+            window.location.assign('/login');
         }
     }
 
