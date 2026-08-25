@@ -1,5 +1,6 @@
 ﻿import os
 import tempfile
+import io
 import unittest
 from pathlib import Path
 
@@ -66,6 +67,46 @@ class WorkboardApiTests(unittest.TestCase):
 
         response = self.client.get("/api/todos/%s/open" % todo_id, headers=access_headers)
         self.assertEqual(response.status_code, 410)
+
+    def test_create_todo_accepts_detail_fields_and_screenshot(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        response = self.client.post(
+            "/api/todos",
+            data={
+                "name": "调试视觉流程",
+                "projectId": "",
+                "projectNumber": "PX-2026-081",
+                "contact": "杨珂",
+                "notes": "先复现现场问题，再整理日志。",
+                "taskDate": "2026-08-25",
+                "dueAt": "2026-08-31T18:00",
+                "screenshot": (io.BytesIO(b"fake-png-content"), "issue.png", "image/png"),
+            },
+            headers=access_headers,
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["item"]
+        self.assertEqual(item["projectNumber"], "PX-2026-081")
+        self.assertEqual(item["contact"], "杨珂")
+        self.assertEqual(item["notes"], "先复现现场问题，再整理日志。")
+        self.assertEqual(item["taskDate"], "2026-08-25")
+        self.assertTrue(item["screenshotUrl"].endswith("/screenshot"))
+
+        screenshot = self.client.get(item["screenshotUrl"], headers=access_headers)
+        self.assertEqual(screenshot.status_code, 200)
+        self.assertEqual(screenshot.data, b"fake-png-content")
+        screenshot.close()
+
+        document = self.client.get(
+            "/api/todos/%s/document" % item["id"], headers=access_headers
+        )
+        markdown = document.get_data(as_text=True)
+        self.assertIn("- Project number: PX-2026-081", markdown)
+        self.assertIn("- Contact: 杨珂", markdown)
+        self.assertIn("先复现现场问题，再整理日志。", markdown)
+        document.close()
 
     def test_cloudflare_mode_requires_identity_header(self):
         server.AUTH_MODE = "cloudflare"

@@ -7,6 +7,7 @@
         this.todos = { todo: [], done: [], limits: { maxTodoItems: 12 } };
         this.csrfToken = null;
         this.noticeTimer = null;
+        this.todoScreenshotFile = null;
         this.bind();
         this.load();
     }
@@ -48,7 +49,19 @@
         document.getElementById('closeSummary').addEventListener('click', () => {
             document.getElementById('summaryDialog').close();
         });
-        document.getElementById('projectCreated').value = new Date().toISOString().slice(0, 10);
+        var today = new Date().toISOString().slice(0, 10);
+        document.getElementById('projectCreated').value = today;
+        document.getElementById('todoDate').value = today;
+        var pasteZone = document.getElementById('todoPasteZone');
+        var screenshotInput = document.getElementById('todoScreenshot');
+        pasteZone.addEventListener('click', () => screenshotInput.click());
+        pasteZone.addEventListener('paste', event => this.capturePastedScreenshot(event));
+        screenshotInput.addEventListener('change', () => {
+            this.setTodoScreenshot(screenshotInput.files && screenshotInput.files[0]);
+        });
+        document.getElementById('clearTodoScreenshot').addEventListener('click', () => {
+            this.setTodoScreenshot(null);
+        });
     }
 
     async load() {
@@ -102,7 +115,7 @@
 
     renderProjectSelect() {
         var select = document.getElementById('todoProject');
-        select.innerHTML = '<option value="">临时工作</option>';
+        select.innerHTML = '<option value="">所属项目（可选）</option>';
         this.projects.forEach(project => {
             var option = document.createElement('option');
             option.value = String(project.id);
@@ -156,28 +169,39 @@
     renderTodos() {
         var container = document.getElementById('todos');
         container.innerHTML = '';
-        var items = (this.todos.todo || []).concat(this.todos.done || []);
+        var items = this.todos.todo || [];
         if (!items.length) {
             container.innerHTML = '<p class="empty">暂无任务。</p>';
             return;
         }
         items.forEach(item => {
             var card = document.createElement('article');
-            card.className = 'todo-item ' + (item.status === 'done' ? 'done' : '');
+            card.className = 'todo-item';
             var due = item.dueAt ? '<span>截止 ' + this.escape(item.dueAt.replace('T', ' ')) + '</span>' : '';
+            var projectName = item.projectName === 'Temporary work' ? '临时工作' : (item.projectName || '临时工作');
+            var screenshot = item.screenshotUrl
+                ? '<button class="todo-shot" type="button" aria-label="查看任务截图"><img src="' + this.api + '/todos/' + item.id + '/screenshot" alt="任务截图"></button>'
+                : '';
             card.innerHTML =
-                '<div class="todo-main"><button class="check" type="button" aria-label="完成任务">' + (item.status === 'done' ? '✓' : '') + '</button>' +
-                '<div><h3>' + this.escape(item.name) + '</h3><p class="muted">' + this.escape(item.projectName || '临时工作') + '</p></div></div>' +
+                '<div class="todo-card-top"><span class="project-id">TASK #' + item.id + '</span><span class="progress">' + item.progress + '%</span></div>' +
+                '<div class="todo-main"><button class="check" type="button" aria-label="完成任务"></button>' +
+                '<div><h3>' + this.escape(item.name) + '</h3><p class="muted">' + this.escape(projectName) +
+                (item.projectNumber ? ' · ' + this.escape(item.projectNumber) : '') + '</p></div></div>' +
+                '<div class="todo-detail-row"><span>联系人 ' + this.escape(item.contact || '未填写') + '</span><span>日期 ' + this.escape(item.taskDate || '-') + '</span></div>' +
+                (item.notes ? '<p class="todo-notes">' + this.escape(item.notes) + '</p>' : '') + screenshot +
                 '<div class="todo-actions"><span class="progress">' + item.progress + '%</span>' +
                 '<button class="link-button document-button" type="button">记录</button>' +
-                (item.status === 'done' ? '' : '<button class="link-button complete-button" type="button">完成</button>') +
+                '<button class="link-button complete-button" type="button">完成</button>' +
                 '</div><div class="todo-due muted small">' + due + '</div>';
             card.querySelector('.document-button').addEventListener('click', () => {
                 window.open(this.api + '/todos/' + item.id + '/document', '_blank', 'noopener,noreferrer');
             });
-            if (item.status !== 'done') {
-                card.querySelector('.complete-button').addEventListener('click', () => this.completeTodo(item.id));
-                card.querySelector('.check').addEventListener('click', () => this.completeTodo(item.id));
+            card.querySelector('.complete-button').addEventListener('click', () => this.completeTodo(item.id));
+            card.querySelector('.check').addEventListener('click', () => this.completeTodo(item.id));
+            if (item.screenshotUrl) {
+                card.querySelector('.todo-shot').addEventListener('click', () => {
+                    window.open(this.api + '/todos/' + item.id + '/screenshot', '_blank', 'noopener,noreferrer');
+                });
             }
             container.appendChild(card);
         });
@@ -200,21 +224,68 @@
     }
 
     async createTodo() {
-        var name = document.getElementById('todoName').value.trim();
-        var projectId = document.getElementById('todoProject').value;
-        var dueAt = document.getElementById('todoDue').value;
+        var formData = new FormData();
+        formData.append('name', document.getElementById('todoName').value.trim());
+        formData.append('projectId', document.getElementById('todoProject').value);
+        formData.append('projectNumber', document.getElementById('todoProjectNumber').value.trim());
+        formData.append('contact', document.getElementById('todoContact').value.trim());
+        formData.append('notes', document.getElementById('todoNotes').value.trim());
+        formData.append('taskDate', document.getElementById('todoDate').value);
+        formData.append('dueAt', document.getElementById('todoDue').value);
+        formData.append('progress', '0');
+        if (this.todoScreenshotFile) {
+            formData.append('screenshot', this.todoScreenshotFile, this.todoScreenshotFile.name || 'clipboard.png');
+        }
         try {
             await this.request('/todos', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name, projectId: projectId || null, dueAt: dueAt || null, progress: 0 })
+                body: formData
             });
             document.getElementById('todoForm').reset();
+            document.getElementById('todoDate').value = new Date().toISOString().slice(0, 10);
+            this.setTodoScreenshot(null);
             this.showNotice('任务已创建');
             await this.load();
         } catch (error) {
             this.showNotice(error.message, true);
         }
+    }
+
+    capturePastedScreenshot(event) {
+        var items = event.clipboardData && event.clipboardData.items;
+        if (!items) return;
+        for (var index = 0; index < items.length; index += 1) {
+            if (items[index].type.indexOf('image/') === 0) {
+                event.preventDefault();
+                this.setTodoScreenshot(items[index].getAsFile());
+                return;
+            }
+        }
+        this.showNotice('剪贴板中没有图片', true);
+    }
+
+    setTodoScreenshot(file) {
+        var preview = document.getElementById('todoScreenshotPreview');
+        var hint = document.getElementById('todoPasteHint');
+        var clearButton = document.getElementById('clearTodoScreenshot');
+        var input = document.getElementById('todoScreenshot');
+        this.todoScreenshotFile = file || null;
+        if (!file) {
+            preview.hidden = true;
+            preview.removeAttribute('src');
+            hint.hidden = false;
+            clearButton.hidden = true;
+            input.value = '';
+            return;
+        }
+        if (file.type.indexOf('image/') !== 0) {
+            this.showNotice('请选择图片文件', true);
+            return;
+        }
+        preview.src = URL.createObjectURL(file);
+        preview.hidden = false;
+        hint.hidden = true;
+        clearButton.hidden = false;
     }
 
     async completeTodo(id) {

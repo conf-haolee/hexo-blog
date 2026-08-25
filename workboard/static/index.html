@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="workboard-base-path" content="">
     <title>私人工作面板</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20260825">
 </head>
 <body>
     <div class="shell">
@@ -24,7 +24,7 @@
 
         <main>
             <section class="hero-grid">
-                <article class="hero-card">
+                <article class="hero-card hero-card-link" onclick="document.getElementById('sec-projects').scrollIntoView({behavior:'smooth'})" title="查看项目列表">
                     <div class="hero-card-head">
                         <span class="status-dot" id="serverStatusDot"></span>
                         <span id="serverStatus">检查服务状态...</span>
@@ -32,12 +32,12 @@
                     <p class="hero-number" id="projectCount">0</p>
                     <p class="muted">已跟踪项目</p>
                 </article>
-                <article class="hero-card accent">
+                <article class="hero-card accent hero-card-link" onclick="document.getElementById('sec-todos').scrollIntoView({behavior:'smooth'})" title="查看待办任务">
                     <p class="hero-number" id="todoCount">0</p>
                     <p class="muted">待处理任务</p>
                     <div class="progress-line"><span id="todoProgress"></span></div>
                 </article>
-                <article class="hero-card">
+                <article class="hero-card hero-card-link" onclick="document.getElementById('sec-heatmap').scrollIntoView({behavior:'smooth'})" title="查看提交热力图">
                     <p class="hero-number" id="commitCount">0</p>
                     <p class="muted">近一年提交记录</p>
                     <p class="small muted" id="lastUpdated">--</p>
@@ -60,7 +60,7 @@
 
             <section class="content-grid">
                 <div class="main-column">
-                    <section class="panel">
+                    <section class="panel" id="sec-heatmap">
                         <div class="section-head">
                             <div>
                                 <p class="eyebrow">ACTIVITY</p>
@@ -71,7 +71,18 @@
                         <div id="heatmap" class="heatmap" aria-label="提交热力图"></div>
                     </section>
 
-                    <section class="panel">
+                    <section class="panel" id="sec-todos">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">IN PROGRESS</p>
+                                <h2>当前处理任务</h2>
+                            </div>
+                            <span class="muted small" id="todoLimit">0 / 12</span>
+                        </div>
+                        <div id="todos" class="todo-grid"></div>
+                    </section>
+
+                    <section class="panel" id="sec-projects">
                         <div class="section-head">
                             <div>
                                 <p class="eyebrow">PROJECTS</p>
@@ -84,25 +95,38 @@
                 </div>
 
                 <aside class="side-column">
-                    <section class="panel">
+                    <section class="panel" id="sec-add-todo">
                         <div class="section-head">
                             <div>
-                                <p class="eyebrow">TODO</p>
-                                <h2>当前任务</h2>
+                                <p class="eyebrow">CAPTURE</p>
+                                <h2>新增任务</h2>
                             </div>
-                            <span class="muted small" id="todoLimit">0 / 12</span>
                         </div>
                         <form id="todoForm" class="stack-form">
-                            <input id="todoName" required maxlength="120" placeholder="添加一个待办任务">
+                            <input id="todoName" required maxlength="120" placeholder="任务名称">
                             <div class="form-row">
                                 <select id="todoProject">
-                                    <option value="">临时工作</option>
+                                    <option value="">所属项目（可选）</option>
                                 </select>
-                                <input id="todoDue" type="datetime-local" aria-label="截止时间">
+                                <input id="todoProjectNumber" maxlength="80" placeholder="项目号（可选）">
                             </div>
-                            <button class="button primary full" type="submit">添加任务</button>
+                            <input id="todoContact" required maxlength="120" placeholder="联系人">
+                            <div class="form-row">
+                                <label class="field-label">当前日期<input id="todoDate" required type="date"></label>
+                                <label class="field-label">截止时间<input id="todoDue" required type="datetime-local"></label>
+                            </div>
+                            <textarea id="todoNotes" rows="4" maxlength="4000" placeholder="备注补充说明"></textarea>
+                            <div id="todoPasteZone" class="paste-zone" tabindex="0" role="button" aria-label="粘贴或选择任务截图">
+                                <input id="todoScreenshot" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                                <div id="todoPasteHint">
+                                    <strong>粘贴截图</strong>
+                                    <span>在此处按 Ctrl+V，或点击选择图片（可选）</span>
+                                </div>
+                                <img id="todoScreenshotPreview" alt="任务截图预览" hidden>
+                            </div>
+                            <button id="clearTodoScreenshot" class="link-button screenshot-clear" type="button" hidden>移除截图</button>
+                            <button class="button primary full" type="submit">提交任务</button>
                         </form>
-                        <div id="todos" class="todo-list"></div>
                     </section>
 
                     <section class="panel">
@@ -140,7 +164,6 @@
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
     </div>
-    <script src="script.js"></script>
+    <script src="script.js?v=20260825"></script>
 </body>
 </html>
-

@@ -82,7 +82,7 @@ SESSION_SECRET = os.environ.get("WORKBOARD_SESSION_SECRET", "")
 MAX_LOGIN_FAILURES = int(os.environ.get("WORKBOARD_MAX_LOGIN_FAILURES", "5"))
 LOGIN_WINDOW = timedelta(minutes=int(os.environ.get("WORKBOARD_LOGIN_WINDOW_MINUTES", "15")))
 LOGIN_FAILURES = defaultdict(list)
-PUBLIC_PATHS = {"/api/health", "/login", "/login.css"}
+PUBLIC_PATHS = {"/api/health", "/login", "/login.css", "/style.css"}
 
 if SESSION_SECRET:
     app.secret_key = SESSION_SECRET
@@ -140,6 +140,12 @@ def init_db(connection):
             progress INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'todo',
             folder_name TEXT NOT NULL,
+            project_number TEXT NOT NULL DEFAULT '',
+            contact TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            task_date TEXT NOT NULL DEFAULT '',
+            screenshot_name TEXT NOT NULL DEFAULT '',
+            screenshot_mime TEXT NOT NULL DEFAULT '',
             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
         );
         CREATE TABLE IF NOT EXISTS settings (
@@ -147,6 +153,23 @@ def init_db(connection):
             value TEXT NOT NULL
         );
         """
+    )
+    todo_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(todos)").fetchall()
+    }
+    migrations = {
+        "project_number": "TEXT NOT NULL DEFAULT ''",
+        "contact": "TEXT NOT NULL DEFAULT ''",
+        "notes": "TEXT NOT NULL DEFAULT ''",
+        "task_date": "TEXT NOT NULL DEFAULT ''",
+        "screenshot_name": "TEXT NOT NULL DEFAULT ''",
+        "screenshot_mime": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, definition in migrations.items():
+        if column not in todo_columns:
+            connection.execute(f"ALTER TABLE todos ADD COLUMN {column} {definition}")
+    connection.execute(
+        "UPDATE todos SET task_date = substr(created_at, 1, 10) WHERE task_date = ''"
     )
     connection.commit()
     import_projects_if_needed(connection)
@@ -515,7 +538,16 @@ def todo_row_to_dict(row):
         "progress": row["progress"],
         "status": row["status"],
         "folderName": row["folder_name"],
+        "projectNumber": row["project_number"],
+        "contact": row["contact"],
+        "notes": row["notes"],
+        "taskDate": row["task_date"],
+        "screenshotName": row["screenshot_name"],
+        "screenshotMime": row["screenshot_mime"],
     }
+    item["screenshotUrl"] = (
+        f"/api/todos/{item['id']}/screenshot" if item["screenshotName"] else None
+    )
     item["todoMarkdownExists"] = (todo_folder(item) / TODO_MARKDOWN_FILE).exists()
     return item
 
@@ -548,6 +580,12 @@ def row_to_mutable_todo(row):
         "progress": row["progress"],
         "status": row["status"],
         "folderName": row["folder_name"],
+        "projectNumber": row["project_number"],
+        "contact": row["contact"],
+        "notes": row["notes"],
+        "taskDate": row["task_date"],
+        "screenshotName": row["screenshot_name"],
+        "screenshotMime": row["screenshot_mime"],
     }
 
 
@@ -555,7 +593,8 @@ def save_todo(item):
     get_db().execute(
         """
         UPDATE todos SET order_no=?, name=?, project_id=?, project_name=?, created_at=?,
-        completed_at=?, due_at=?, progress=?, status=?, folder_name=? WHERE id=?
+        completed_at=?, due_at=?, progress=?, status=?, folder_name=?, project_number=?,
+        contact=?, notes=?, task_date=?, screenshot_name=?, screenshot_mime=? WHERE id=?
         """,
         (
             item["orderNo"],
@@ -568,6 +607,12 @@ def save_todo(item):
             item["progress"],
             item["status"],
             item["folderName"],
+            item["projectNumber"],
+            item["contact"],
+            item["notes"],
+            item["taskDate"],
+            item["screenshotName"],
+            item["screenshotMime"],
             item["id"],
         ),
     )
@@ -583,13 +628,20 @@ def todo_markdown(item):
             f"- Status: {status}",
             f"- Progress: {item['progress']}%",
             f"- Project: {item['projectName'] or 'Temporary work'}",
+            f"- Project number: {item['projectNumber'] or 'Not set'}",
+            f"- Contact: {item['contact'] or 'Not set'}",
+            f"- Task date: {item['taskDate']}",
             f"- Created: {item['createdAt']}",
             f"- Due: {item['dueAt'] or 'Not set'}",
             f"- Completed: {item['completedAt'] or 'Not completed'}",
             "",
             "## Notes",
             "",
-            "Add progress notes, evidence, screenshots and delivery details here.",
+            item["notes"] or "Add progress notes, evidence, screenshots and delivery details here.",
+            "",
+            "## Screenshot",
+            "",
+            item["screenshotName"] or "Not attached",
             "",
         ]
     )
@@ -604,6 +656,9 @@ def sync_todo_markdown(item):
 def serialize_todo(item):
     result = dict(item)
     result["todoMarkdownExists"] = (todo_folder(item) / TODO_MARKDOWN_FILE).exists()
+    result["screenshotUrl"] = (
+        f"/api/todos/{item['id']}/screenshot" if item["screenshotName"] else None
+    )
     return result
 
 
@@ -865,15 +920,37 @@ def get_todos():
 
 @app.route("/api/todos", methods=["POST"])
 def create_todo():
-    payload = request.get_json(silent=True) or {}
+    is_form_submission = request.mimetype == "multipart/form-data"
+    payload = request.form.to_dict() if is_form_submission else (request.get_json(silent=True) or {})
     name = str(payload.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Task name is required"}), 400
+    contact = str(payload.get("contact") or "").strip()
+    if is_form_submission and not contact:
+        return jsonify({"error": "Contact is required"}), 400
     try:
         due_at = validate_due_at(payload.get("dueAt"))
         progress = validate_progress(payload.get("progress"), default=0)
+        task_date = validate_date(
+            payload.get("taskDate") or datetime.now().strftime("%Y-%m-%d")
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    screenshot = request.files.get("screenshot")
+    screenshot_name = ""
+    screenshot_mime = ""
+    if screenshot and screenshot.filename:
+        screenshot_mime = str(screenshot.mimetype or "").lower()
+        extensions = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        if screenshot_mime not in extensions:
+            return jsonify({"error": "Screenshot must be PNG, JPEG, WebP or GIF"}), 400
+        screenshot_name = "screenshot" + extensions[screenshot_mime]
 
     project_id = payload.get("projectId")
     project = None
@@ -897,8 +974,10 @@ def create_todo():
     cursor = db.execute(
         """
         INSERT INTO todos
-        (order_no, name, project_id, project_name, created_at, due_at, progress, status, folder_name)
-        VALUES ((SELECT COALESCE(MAX(order_no), 0) + 1 FROM todos), ?, ?, ?, ?, ?, ?, 'todo', ?)
+        (order_no, name, project_id, project_name, created_at, due_at, progress, status,
+         folder_name, project_number, contact, notes, task_date, screenshot_name, screenshot_mime)
+        VALUES ((SELECT COALESCE(MAX(order_no), 0) + 1 FROM todos), ?, ?, ?, ?, ?, ?, 'todo',
+                ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -908,11 +987,19 @@ def create_todo():
             due_at,
             progress,
             folder_name,
+            str(payload.get("projectNumber") or "").strip()[:80],
+            contact[:120],
+            str(payload.get("notes") or "").strip()[:4000],
+            task_date,
+            screenshot_name,
+            screenshot_mime,
         ),
     )
     db.commit()
     item = find_todo(cursor.lastrowid)
     sync_todo_markdown(item)
+    if screenshot_name:
+        screenshot.save(todo_folder(item) / screenshot_name)
     return jsonify({"success": True, "item": serialize_todo(item)})
 
 
@@ -991,6 +1078,17 @@ def todo_document(todo_id):
         return jsonify({"error": "Todo item not found"}), 404
     sync_todo_markdown(item)
     return send_file(todo_folder(item) / TODO_MARKDOWN_FILE, mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/api/todos/<int:todo_id>/screenshot")
+def todo_screenshot(todo_id):
+    item = find_todo(todo_id)
+    if item is None or not item["screenshotName"]:
+        return jsonify({"error": "Screenshot not found"}), 404
+    screenshot_path = todo_folder(item) / item["screenshotName"]
+    if not screenshot_path.is_file():
+        return jsonify({"error": "Screenshot not found"}), 404
+    return send_file(screenshot_path, mimetype=item["screenshotMime"])
 
 
 @app.route("/api/contributions")
