@@ -43,6 +43,28 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+
+
+def load_local_env_file(path):
+    env_path = Path(path)
+    if not env_path.exists() or not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+load_local_env_file(os.environ.get("WORKBOARD_ENV_FILE", BASE_DIR / ".env.local"))
+
 DATA_DIR = Path(os.environ.get("WORKBOARD_DATA_DIR", BASE_DIR / "data")).resolve()
 DB_PATH = Path(os.environ.get("WORKBOARD_DB", DATA_DIR / "workboard.sqlite3")).resolve()
 DOCS_DIR = Path(os.environ.get("WORKBOARD_DOCS_DIR", DATA_DIR / "docs")).resolve()
