@@ -6,4 +6,12 @@ node_modules/
 public/
 .deploy*/
 _multiconfig.yml
-
+workboard/data/*.sqlite3
+workboard/data/*.sqlite3-*
+workboard/data/ai_settings.json
+workboard/data/docs/
+workboard/.env.local
+workboard/.venv/
+workboard/__pycache__/
+workboard/**/__pycache__/
+workboard/tests/__pycache__/

@@ -1,10 +1,657 @@
 ﻿import os
 import tempfile
 import io
+import hashlib
+import contextlib
+import sqlite3
+import sys
+import threading
+import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 import server
+
+
+class WorkboardServerTest(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        server.DATA_DIR = root / "data"
+        server.DB_PATH = server.DATA_DIR / "workboard.sqlite3"
+        server.DOCS_DIR = server.DATA_DIR / "docs"
+        server.TODO_DIR = server.DOCS_DIR / "TODO"
+        server.DONE_DIR = server.DOCS_DIR / "Done"
+        server.PROJECTS_IMPORT_FILE = root / "missing-projects.json"
+        server.AUTH_MODE = "cloudflare"
+        server.ALLOWED_EMAILS = {"owner@example.com"}
+        server.ALLOWED_ORIGINS = {"http://localhost:5000"}
+        server.app.config.update(TESTING=True)
+        self.client = server.app.test_client()
+        self.access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def enable_agent(self):
+        previous_agent_token = server.AGENT_TOKEN
+        self.addCleanup(setattr, server, "AGENT_TOKEN", previous_agent_token)
+        server.AGENT_TOKEN = "test-agent-token"
+
+    def agent_headers(self, agent_id, lease_token=None, authorization=None):
+        headers = {
+            "Authorization": authorization or "Bearer test-agent-token",
+            "X-Workboard-Agent-Id": agent_id,
+        }
+        if lease_token:
+            headers["X-Workboard-Lease-Token"] = lease_token
+        return headers
+
+    def create_archive_pending(self, name="Archive workflow task", screenshot=False):
+        payload = {"name": name}
+        if screenshot:
+            response = self.client.post(
+                "/api/todos",
+                data={
+                    **payload,
+                    "contact": "Archive owner",
+                    "screenshot": (io.BytesIO(b"source-screenshot"), "source.png", "image/png"),
+                },
+                headers=self.access_headers,
+                content_type="multipart/form-data",
+            )
+        else:
+            response = self.client.post("/api/todos", json=payload, headers=self.access_headers)
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["item"]
+        response.close()
+        response = self.client.post("/api/todos/%s/complete" % item["id"], headers=self.access_headers)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        return item
+
+    def claim(self, agent_id="agent-a", lease_token=None):
+        response = self.client.post(
+            "/api/agent/jobs/claim",
+            json={"agentId": agent_id, "leaseToken": lease_token} if lease_token else {"agentId": agent_id},
+            headers=self.agent_headers(agent_id, lease_token),
+        )
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        response.close()
+        return result
+
+    def upload(self, todo_id, agent_id, lease_token, relative_path, content):
+        return self.client.put(
+            "/api/agent/jobs/%s/files" % todo_id,
+            data={
+                "relativePath": relative_path,
+                "expectedSize": str(len(content)),
+                "expectedSha256": hashlib.sha256(content).hexdigest(),
+                "file": (io.BytesIO(content), Path(relative_path).name),
+            },
+            headers=self.agent_headers(agent_id, lease_token),
+            content_type="multipart/form-data",
+        )
+
+    def commit(self, todo_id, agent_id, lease_token, manifest):
+        return self.client.post(
+            "/api/agent/jobs/%s/commit" % todo_id,
+            json={"manifest": manifest},
+            headers=self.agent_headers(agent_id, lease_token),
+        )
+
+    def test_todo_archive_fields_migrate_and_serialize(self):
+        server.DATA_DIR.mkdir(parents=True)
+        connection = sqlite3.connect(server.DB_PATH)
+        connection.execute(
+            """
+            CREATE TABLE todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_no INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                project_id INTEGER,
+                project_name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                due_at TEXT,
+                progress INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'todo',
+                folder_name TEXT NOT NULL,
+                project_number TEXT NOT NULL DEFAULT '',
+                contact TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                task_date TEXT NOT NULL DEFAULT '',
+                screenshot_name TEXT NOT NULL DEFAULT '',
+                screenshot_mime TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        response = self.client.post(
+            "/api/todos", json={"name": "Archive-ready task"}, headers=self.access_headers
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["item"]
+        response.close()
+        migrated = sqlite3.connect(server.DB_PATH)
+        columns = {row[1] for row in migrated.execute("PRAGMA table_info(todos)")}
+        migrated.close()
+        self.assertTrue(
+            {
+                "result_description",
+                "local_path",
+                "archive_status",
+                "archive_error",
+                "archive_lease_until",
+                "archive_agent_id",
+                "archive_completed_at",
+            }.issubset(columns)
+        )
+        self.assertEqual(item["resultDescription"], "")
+        self.assertEqual(item["localPath"], "")
+        self.assertEqual(item["archiveStatus"], "")
+        self.assertEqual(item["archiveError"], "")
+        self.assertIsNone(item["archiveCompletedAt"])
+
+    def test_update_todo_details_validates_local_path(self):
+        self.assertEqual(server.normalize_local_path(""), "")
+        self.assertEqual(server.normalize_local_path("TaskA"), "TaskA")
+        self.assertEqual(
+            server.normalize_local_path(r"D:\01WorkBoard\TaskA"), "TaskA"
+        )
+        for unsafe_path in (r"..\secret", r"C:\secret", r"\\server\share"):
+            with self.assertRaises(ValueError):
+                server.normalize_local_path(unsafe_path)
+
+        project_response = self.client.post(
+            "/api/projects",
+            json={
+                "name": "Archive Project",
+                "nasPath": r"\\nas\projects\archive-project",
+                "created": "2026-08-25",
+            },
+            headers=self.access_headers,
+        )
+        self.assertEqual(project_response.status_code, 200)
+        project_id = project_response.get_json()["item"]["id"]
+        project_response.close()
+
+        todo_response = self.client.post(
+            "/api/todos",
+            data={
+                "name": "Original task",
+                "contact": "Original owner",
+                "taskDate": "2026-08-25",
+                "screenshot": (io.BytesIO(b"original-image"), "original.png", "image/png"),
+            },
+            headers=self.access_headers,
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(todo_response.status_code, 200)
+        original = todo_response.get_json()["item"]
+        todo_response.close()
+
+        response = self.client.patch(
+            "/api/todos/%s" % original["id"],
+            json={
+                "name": "Edited task",
+                "projectId": project_id,
+                "projectNumber": "WB-2026-001",
+                "contact": "Archive owner",
+                "notes": "Archive the completed work package.",
+                "resultDescription": "Local archive verified.",
+                "localPath": r"D:\01WorkBoard\TaskA",
+                "taskDate": "2026-08-26",
+                "dueAt": "2026-08-31T18:00",
+                "progress": 80,
+            },
+            headers=self.access_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["item"]
+        response.close()
+        self.assertEqual(item["name"], "Edited task")
+        self.assertEqual(item["projectName"], "Archive Project")
+        self.assertEqual(item["projectNumber"], "WB-2026-001")
+        self.assertEqual(item["contact"], "Archive owner")
+        self.assertEqual(item["notes"], "Archive the completed work package.")
+        self.assertEqual(item["resultDescription"], "Local archive verified.")
+        self.assertEqual(item["localPath"], "TaskA")
+        self.assertEqual(item["taskDate"], "2026-08-26")
+        self.assertEqual(item["dueAt"], "2026-08-31T18:00")
+        self.assertEqual(item["progress"], 80)
+        self.assertEqual(item["screenshotName"], original["screenshotName"])
+
+        screenshot_response = self.client.patch(
+            "/api/todos/%s" % original["id"],
+            data={
+                "name": "Edited task",
+                "screenshot": (io.BytesIO(b"replacement-image"), "replacement.jpg", "image/jpeg"),
+            },
+            headers=self.access_headers,
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(screenshot_response.status_code, 200)
+        replacement = screenshot_response.get_json()["item"]
+        screenshot_response.close()
+        self.assertEqual(replacement["screenshotName"], "screenshot.jpg")
+        screenshot = self.client.get(replacement["screenshotUrl"], headers=self.access_headers)
+        self.assertEqual(screenshot.data, b"replacement-image")
+        screenshot.close()
+
+    def test_update_todo_details_applies_editable_field_limits(self):
+        todo_response = self.client.post(
+            "/api/todos",
+            json={"name": "Original task", "taskDate": "2026-08-25"},
+            headers=self.access_headers,
+        )
+        self.assertEqual(todo_response.status_code, 200)
+        todo_id = todo_response.get_json()["item"]["id"]
+        todo_response.close()
+
+        name = "n" * 201
+        project_number = "p" * 81
+        contact = "c" * 121
+        notes = "o" * 4001
+        result_description = "r" * 8001
+        local_path = "l" * 501
+        response = self.client.patch(
+            "/api/todos/%s" % todo_id,
+            json={
+                "name": name,
+                "projectNumber": project_number,
+                "contact": contact,
+                "notes": notes,
+                "resultDescription": result_description,
+                "localPath": local_path,
+                "taskDate": "2026-08-26",
+                "dueAt": "2026-08-31T18:00",
+                "progress": 100,
+            },
+            headers=self.access_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["item"]
+        response.close()
+        self.assertEqual(item["name"], name[:200])
+        self.assertEqual(item["projectNumber"], project_number[:80])
+        self.assertEqual(item["contact"], contact[:120])
+        self.assertEqual(item["notes"], notes[:4000])
+        self.assertEqual(item["resultDescription"], result_description[:8000])
+        self.assertEqual(item["localPath"], local_path[:500])
+        self.assertEqual(item["dueAt"], "2026-08-31T18:00")
+        self.assertEqual(item["progress"], 100)
+
+    def test_agent_requires_bearer_authentication_and_put_upload(self):
+        self.enable_agent()
+        item = self.create_archive_pending()
+        response = self.client.post("/api/agent/jobs/claim", json={"agentId": "agent-a"})
+        self.assertEqual(response.status_code, 401)
+        response.close()
+        response = self.client.post(
+            "/api/agent/jobs/claim",
+            json={"agentId": "agent-a"},
+            headers={"Authorization": "Basic test-agent-token"},
+        )
+        self.assertEqual(response.status_code, 401)
+        response.close()
+        claim = self.claim()
+        lease_token = claim["leaseToken"]
+        response = self.client.post(
+            "/api/agent/jobs/%s/files" % item["id"],
+            headers=self.agent_headers("agent-a", lease_token),
+        )
+        self.assertEqual(response.status_code, 405)
+        response.close()
+        response = self.upload(item["id"], "agent-a", lease_token, "evidence.txt", b"evidence")
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        previous_limit = server.app.config["MAX_CONTENT_LENGTH"]
+        self.addCleanup(server.app.config.__setitem__, "MAX_CONTENT_LENGTH", previous_limit)
+        server.app.config["MAX_CONTENT_LENGTH"] = 8
+        response = self.upload(item["id"], "agent-a", lease_token, "too-large.txt", b"too-large")
+        self.assertEqual(response.status_code, 413)
+        response.close()
+        server.AGENT_TOKEN = ""
+        response = self.client.post("/api/agent/jobs/claim", json={"agentId": "agent-a"})
+        self.assertEqual(response.status_code, 503)
+        response.close()
+
+    def test_commit_requires_exact_manifest_and_allows_empty_archive(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Manifest extra")
+        claim = self.claim()
+        lease_token = claim["leaseToken"]
+        content = b"evidence"
+        response = self.upload(item["id"], "agent-a", lease_token, "evidence.txt", content)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        response = self.commit(item["id"], "agent-a", lease_token, [])
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        manifest = [{"relativePath": "evidence.txt", "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}]
+        wrong_manifest = [{**manifest[0], "sha256": "0" * 64}]
+        response = self.commit(item["id"], "agent-a", lease_token, wrong_manifest)
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        response = self.commit(item["id"], "agent-a", lease_token, manifest)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        response = self.upload(item["id"], "agent-a", lease_token, "evidence.txt", content)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        response = self.upload(item["id"], "agent-a", lease_token, "evidence.txt", b"changed")
+        self.assertEqual(response.status_code, 409)
+        response.close()
+
+        empty_item = self.create_archive_pending("Empty archive")
+        empty_claim = self.claim()
+        response = self.commit(empty_item["id"], "agent-a", empty_claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+    def test_agent_lease_token_fences_stale_requests_and_renews_for_same_agent(self):
+        self.enable_agent()
+        item = self.create_archive_pending()
+        claim = self.claim()
+        lease_token = claim["leaseToken"]
+        renewed = self.claim("agent-a", lease_token)
+        self.assertEqual(renewed["leaseToken"], lease_token)
+        response = self.upload(item["id"], "agent-a", "stale-token", "evidence.txt", b"evidence")
+        self.assertEqual(response.status_code, 409)
+        response.close()
+        response = self.upload(item["id"], "agent-a", lease_token, "evidence.txt", b"evidence")
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+    def test_committed_job_is_reclaimable_after_lease_expiry_and_can_finish(self):
+        self.enable_agent()
+        item = self.create_archive_pending()
+        claim = self.claim()
+        response = self.commit(item["id"], "agent-a", claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        with server.app.app_context():
+            expired = server.find_todo(item["id"])
+            expired["archiveLeaseUntil"] = "2000-01-01T00:00:00"
+            server.save_todo(expired)
+        recovered = self.claim("agent-b")
+        response = self.client.post(
+            "/api/agent/jobs/%s/finish" % item["id"],
+            headers=self.agent_headers("agent-b", recovered["leaseToken"]),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["item"]["status"], "done")
+        response.close()
+
+    def test_failed_archive_requires_web_retry_before_another_claim(self):
+        self.enable_agent()
+        item = self.create_archive_pending()
+        claim = self.claim()
+        response = self.client.post(
+            "/api/agent/jobs/%s/fail" % item["id"],
+            json={"error": "NAS unavailable"},
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["item"]["archiveStatus"], "failed")
+        response.close()
+        response = self.client.post(
+            "/api/agent/jobs/claim",
+            json={"agentId": "agent-b"},
+            headers=self.agent_headers("agent-b"),
+        )
+        self.assertEqual(response.status_code, 204)
+        response.close()
+        response = self.client.post(
+            "/api/todos/%s/archive/retry" % item["id"], headers=self.access_headers
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["item"]["archiveStatus"], "pending")
+        response.close()
+        recovered = self.claim("agent-b")
+        self.assertEqual(recovered["job"]["id"], item["id"])
+
+    def test_retry_resets_staging_before_accepting_a_new_manifest(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Retry cleans staging")
+        claim = self.claim()
+        self.client.post(
+            "/api/agent/jobs/%s/fail" % item["id"],
+            json={"error": "copy interrupted"},
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        ).close()
+        stale = server.DATA_DIR / ".archive-staging" / str(item["id"]) / "files"
+        stale.mkdir(parents=True)
+        stale.joinpath("old-extra.txt").write_bytes(b"old")
+        response = self.client.post("/api/todos/%s/archive/retry" % item["id"], headers=self.access_headers)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        self.assertFalse(stale.joinpath("old-extra.txt").exists())
+        new_claim = self.claim("agent-b")
+        content = b"new"
+        response = self.upload(item["id"], "agent-b", new_claim["leaseToken"], "new.txt", content)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        response = self.commit(item["id"], "agent-b", new_claim["leaseToken"], [{"relativePath": "new.txt", "size": 3, "sha256": hashlib.sha256(content).hexdigest()}])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+    def test_retry_keeps_failed_state_when_staging_reset_fails(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Retry remains failed")
+        claim = self.claim()
+        self.client.post(
+            "/api/agent/jobs/%s/fail" % item["id"],
+            json={"error": "copy interrupted"},
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        ).close()
+        with patch.object(server.ArchiveStorage, "reset_locked", side_effect=OSError("reset denied"), create=True):
+            response = self.client.post("/api/todos/%s/archive/retry" % item["id"], headers=self.access_headers)
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        with server.app.app_context():
+            self.assertEqual(server.find_todo(item["id"])["archiveStatus"], "failed")
+
+    def test_upload_rechecks_lease_after_waiting_for_task_lock(self):
+        self.enable_agent(); item = self.create_archive_pending("Lease changes while waiting"); claim = self.claim()
+        storage = server.archive_storage(); result = {}
+        with storage.task_lock(item["id"]):
+            def upload_in_thread():
+                client = server.app.test_client()
+                result["response"] = client.put(
+                    "/api/agent/jobs/%s/files" % item["id"],
+                    data={"relativePath": "late.txt", "expectedSize": "4", "expectedSha256": hashlib.sha256(b"late").hexdigest(), "file": (io.BytesIO(b"late"), "late.txt")},
+                    headers=self.agent_headers("agent-a", claim["leaseToken"]), content_type="multipart/form-data")
+            worker = threading.Thread(target=upload_in_thread); worker.start(); time.sleep(0.15)
+            with server.app.app_context():
+                stale = server.find_todo(item["id"]); stale["archiveLeaseUntil"] = "2000-01-01T00:00:00"; server.save_todo(stale)
+        worker.join(5)
+        self.assertEqual(result["response"].status_code, 409)
+
+    def test_finish_rechecks_lease_after_waiting_for_task_lock(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Finish lease changes while waiting")
+        claim = self.claim()
+        response = self.commit(item["id"], "agent-a", claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+        storage = server.archive_storage()
+        acquire_attempted = threading.Event()
+        original_task_lock = storage.task_lock
+        result = {}
+
+        @contextlib.contextmanager
+        def observed_task_lock(todo_id):
+            acquire_attempted.set()
+            with original_task_lock(todo_id):
+                yield
+
+        def finish_in_thread():
+            client = server.app.test_client()
+            response = client.post(
+                "/api/agent/jobs/%s/finish" % item["id"],
+                headers=self.agent_headers("agent-a", claim["leaseToken"]),
+            )
+            result["status_code"] = response.status_code
+            response.close()
+
+        with patch.object(server, "archive_storage", return_value=storage), patch.object(
+            storage, "task_lock", new=observed_task_lock
+        ):
+            with original_task_lock(item["id"]):
+                worker = threading.Thread(target=finish_in_thread)
+                worker.start()
+                self.assertTrue(acquire_attempted.wait(2), "finish never attempted the task lock")
+                with server.app.app_context():
+                    replaced = server.find_todo(item["id"])
+                    replaced["archiveAgentId"] = "agent-b"
+                    replaced["archiveLeaseToken"] = "replacement-token"
+                    replaced["archiveLeaseUntil"] = server.utc_timestamp(
+                        server.utc_now() + server.ARCHIVE_LEASE_DURATION
+                    )
+                    server.save_todo(replaced)
+            worker.join(5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result["status_code"], 409)
+        with server.app.app_context():
+            unchanged = server.find_todo(item["id"])
+        self.assertEqual(unchanged["status"], "archive_pending")
+        self.assertEqual(unchanged["archiveStatus"], "committed")
+        self.assertTrue((server.TODO_DIR / item["folderName"] / "TODO.md").is_file())
+        self.assertFalse((server.DONE_DIR / item["folderName"] / "TODO.md").exists())
+
+    def test_agent_routes_handle_task_lock_entry_failure_without_state_change(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Unsafe task lock")
+        claim = self.claim()
+        response = self.commit(item["id"], "agent-a", claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+        previous_propagation = server.app.config.get("PROPAGATE_EXCEPTIONS")
+        self.addCleanup(
+            server.app.config.__setitem__, "PROPAGATE_EXCEPTIONS", previous_propagation
+        )
+        server.app.config["PROPAGATE_EXCEPTIONS"] = False
+        with patch.object(
+            server.ArchiveStorage,
+            "task_lock",
+            side_effect=ValueError("Archive lock directory is unsafe"),
+        ):
+            responses = [
+                self.upload(
+                    item["id"],
+                    "agent-a",
+                    claim["leaseToken"],
+                    "late.txt",
+                    b"late",
+                ),
+                self.commit(item["id"], "agent-a", claim["leaseToken"], []),
+                self.client.post(
+                    "/api/agent/jobs/%s/finish" % item["id"],
+                    headers=self.agent_headers("agent-a", claim["leaseToken"]),
+                ),
+            ]
+
+        try:
+            self.assertEqual([response.status_code for response in responses], [400, 400, 400])
+        finally:
+            for response in responses:
+                response.close()
+        with server.app.app_context():
+            unchanged = server.find_todo(item["id"])
+        self.assertEqual(unchanged["status"], "archive_pending")
+        self.assertEqual(unchanged["archiveStatus"], "committed")
+        self.assertTrue((server.TODO_DIR / item["folderName"] / "TODO.md").is_file())
+        self.assertFalse((server.DONE_DIR / item["folderName"] / "TODO.md").exists())
+
+    def test_finish_task_lock_timeout_returns_503_without_state_change(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Finish task lock timeout")
+        claim = self.claim()
+        response = self.commit(item["id"], "agent-a", claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+        source_markdown = server.TODO_DIR / item["folderName"] / "TODO.md"
+        target_markdown = server.DONE_DIR / item["folderName"] / "TODO.md"
+        self.assertTrue(source_markdown.is_file())
+        self.assertFalse(target_markdown.exists())
+
+        with patch.object(
+            server.ArchiveStorage,
+            "task_lock",
+            side_effect=TimeoutError("Timed out waiting for archive task lock"),
+        ):
+            response = self.client.post(
+                "/api/agent/jobs/%s/finish" % item["id"],
+                headers=self.agent_headers("agent-a", claim["leaseToken"]),
+            )
+
+        self.assertEqual(response.status_code, 503)
+        response.close()
+        with server.app.app_context():
+            unchanged = server.find_todo(item["id"])
+        self.assertEqual(unchanged["status"], "archive_pending")
+        self.assertEqual(unchanged["archiveStatus"], "committed")
+        self.assertTrue(source_markdown.is_file())
+        self.assertFalse(target_markdown.exists())
+
+    def test_finish_preflights_conflicts_and_repairs_final_markdown_idempotently(self):
+        self.enable_agent()
+        item = self.create_archive_pending("Move safely", screenshot=True)
+        claim = self.claim()
+        response = self.commit(item["id"], "agent-a", claim["leaseToken"], [])
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        source = server.TODO_DIR / item["folderName"]
+        target = server.DONE_DIR / item["folderName"]
+        (target / "screenshot.png").write_bytes(b"conflicting screenshot")
+        response = self.client.post(
+            "/api/agent/jobs/%s/finish" % item["id"],
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        )
+        self.assertEqual(response.status_code, 400)
+        response.close()
+        self.assertTrue((source / "TODO.md").is_file())
+        self.assertTrue((source / "screenshot.png").is_file())
+        (target / "screenshot.png").unlink()
+        with server.app.app_context():
+            recovered_markdown = dict(server.find_todo(item["id"]))
+        recovered_markdown.update(status="done", progress=100)
+        (target / "TODO.md").write_text(server.todo_markdown(recovered_markdown), encoding="utf-8")
+        response = self.client.post(
+            "/api/agent/jobs/%s/finish" % item["id"],
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        )
+        self.assertEqual(response.status_code, 200)
+        finished = response.get_json()["item"]
+        response.close()
+        final_markdown = target / "TODO.md"
+        self.assertTrue(final_markdown.is_file())
+        self.assertIn("- Status: done", final_markdown.read_text(encoding="utf-8"))
+        final_markdown.unlink()
+        response = self.client.post(
+            "/api/agent/jobs/%s/finish" % item["id"],
+            headers=self.agent_headers("agent-a", claim["leaseToken"]),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["item"]["id"], finished["id"])
+        response.close()
+        self.assertTrue(final_markdown.is_file())
 
 
 class WorkboardApiTests(unittest.TestCase):

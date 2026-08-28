@@ -1,0 +1,8 @@
+{
+  "workboardUrl": "http://127.0.0.1:5000",
+  "agentToken": "replace-with-a-long-random-token",
+  "agentId": "workboard-local-agent",
+  "rootPath": "D:\\01WorkBoard",
+  "nasArchivePath": "\\\\NAS\\WorkArchive",
+  "logPath": "C:\\Users\\YourName\\AppData\\Local\\Workboard\\agent.log"
+}

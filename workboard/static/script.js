@@ -8,6 +8,8 @@
         this.csrfToken = null;
         this.noticeTimer = null;
         this.todoScreenshotFile = null;
+        this.editingTodo = null;
+        this.todoClickTimer = null;
         this.bind();
         this.load();
     }
@@ -48,6 +50,16 @@
         document.getElementById('summaryWeek').addEventListener('click', () => this.generateSummary('week'));
         document.getElementById('closeSummary').addEventListener('click', () => {
             document.getElementById('summaryDialog').close();
+        });
+        document.getElementById('closeTodoEdit').addEventListener('click', () => this.closeTodoEditor());
+        document.getElementById('cancelTodoEdit').addEventListener('click', () => this.closeTodoEditor());
+        document.getElementById('todoEditForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.saveTodoEdit();
+        });
+        document.getElementById('todoArchiveRetry').addEventListener('click', event => {
+            event.stopPropagation();
+            if (this.editingTodo) this.retryArchive(this.editingTodo.id);
         });
         var today = new Date().toISOString().slice(0, 10);
         document.getElementById('projectCreated').value = today;
@@ -114,7 +126,10 @@
     }
 
     renderProjectSelect() {
-        var select = document.getElementById('todoProject');
+        this.populateProjectSelect(document.getElementById('todoProject'));
+    }
+
+    populateProjectSelect(select) {
         select.innerHTML = '<option value="">所属项目（可选）</option>';
         this.projects.forEach(project => {
             var option = document.createElement('option');
@@ -177,10 +192,16 @@
         items.forEach(item => {
             var card = document.createElement('article');
             card.className = 'todo-item';
+            card.dataset.todoId = String(item.id);
             var due = item.dueAt ? '<span>截止 ' + this.escape(item.dueAt.replace('T', ' ')) + '</span>' : '';
             var projectName = item.projectName === 'Temporary work' ? '临时工作' : (item.projectName || '临时工作');
             var screenshot = item.screenshotUrl
                 ? '<button class="todo-shot" type="button" aria-label="查看任务截图"><img src="' + this.api + '/todos/' + item.id + '/screenshot" alt="任务截图"></button>'
+                : '';
+            var archiveLabel = this.archiveStatusLabel(item.archiveStatus);
+            var archiveClass = item.archiveStatus ? ' archive-' + item.archiveStatus : '';
+            var archiveError = item.archiveStatus === 'failed' && item.archiveError
+                ? '<p class="archive-error">' + this.escape(item.archiveError) + '</p>'
                 : '';
             card.innerHTML =
                 '<div class="todo-card-top"><span class="project-id">TASK #' + item.id + '</span><span class="progress">' + item.progress + '%</span></div>' +
@@ -188,23 +209,124 @@
                 '<div><h3>' + this.escape(item.name) + '</h3><p class="muted">' + this.escape(projectName) +
                 (item.projectNumber ? ' · ' + this.escape(item.projectNumber) : '') + '</p></div></div>' +
                 '<div class="todo-detail-row"><span>联系人 ' + this.escape(item.contact || '未填写') + '</span><span>日期 ' + this.escape(item.taskDate || '-') + '</span></div>' +
+                (item.localPath ? '<div class="todo-detail-row"><span>本地 ' + this.escape(item.localPath) + '</span></div>' : '') +
                 (item.notes ? '<p class="todo-notes">' + this.escape(item.notes) + '</p>' : '') + screenshot +
+                (archiveLabel ? '<div class="archive-status' + archiveClass + '">' + archiveLabel + '</div>' + archiveError : '') +
                 '<div class="todo-actions"><span class="progress">' + item.progress + '%</span>' +
                 '<button class="link-button document-button" type="button">记录</button>' +
                 '<button class="link-button complete-button" type="button">完成</button>' +
                 '</div><div class="todo-due muted small">' + due + '</div>';
-            card.querySelector('.document-button').addEventListener('click', () => {
+            card.addEventListener('click', () => {
+                clearTimeout(this.todoClickTimer);
+                this.todoClickTimer = setTimeout(() => this.openTodoEditor(item), 180);
+            });
+            card.addEventListener('dblclick', () => {
+                clearTimeout(this.todoClickTimer);
+                this.openTodoFolder(item);
+            });
+            card.querySelector('.document-button').addEventListener('click', event => {
+                event.stopPropagation();
                 window.open(this.api + '/todos/' + item.id + '/document', '_blank', 'noopener,noreferrer');
             });
-            card.querySelector('.complete-button').addEventListener('click', () => this.completeTodo(item.id));
-            card.querySelector('.check').addEventListener('click', () => this.completeTodo(item.id));
+            card.querySelector('.complete-button').addEventListener('click', event => {
+                event.stopPropagation();
+                this.completeTodo(item.id);
+            });
+            card.querySelector('.check').addEventListener('click', event => {
+                event.stopPropagation();
+                this.completeTodo(item.id);
+            });
             if (item.screenshotUrl) {
-                card.querySelector('.todo-shot').addEventListener('click', () => {
+                card.querySelector('.todo-shot').addEventListener('click', event => {
+                    event.stopPropagation();
                     window.open(this.api + '/todos/' + item.id + '/screenshot', '_blank', 'noopener,noreferrer');
                 });
             }
             container.appendChild(card);
         });
+    }
+
+    archiveStatusLabel(status) {
+        return {
+            pending: '等待归档',
+            claimed: '正在归档',
+            committed: '正在归档',
+            failed: '归档失败',
+            complete: '已完成'
+        }[status] || '';
+    }
+
+    openTodoEditor(item) {
+        this.editingTodo = item;
+        this.populateProjectSelect(document.getElementById('todoEditProject'));
+        document.getElementById('todoEditName').value = item.name || '';
+        document.getElementById('todoEditProject').value = item.projectId ? String(item.projectId) : '';
+        document.getElementById('todoEditProjectName').value = item.projectName === 'Temporary work' ? '' : (item.projectName || '');
+        document.getElementById('todoEditProjectNumber').value = item.projectNumber || '';
+        document.getElementById('todoEditContact').value = item.contact || '';
+        document.getElementById('todoEditDate').value = item.taskDate || '';
+        document.getElementById('todoEditDue').value = item.dueAt || '';
+        document.getElementById('todoEditProgress').value = item.progress == null ? 0 : item.progress;
+        document.getElementById('todoEditLocalPath').value = item.localPath || '';
+        document.getElementById('todoEditNotes').value = item.notes || '';
+        document.getElementById('todoEditResultDescription').value = item.resultDescription || '';
+        var archiveArea = document.getElementById('todoArchiveArea');
+        var archiveLabel = this.archiveStatusLabel(item.archiveStatus);
+        archiveArea.hidden = !archiveLabel && !item.archiveError;
+        document.getElementById('todoArchiveStatus').textContent = archiveLabel;
+        document.getElementById('todoArchiveError').textContent = item.archiveError || '';
+        document.getElementById('todoArchiveRetry').hidden = item.archiveStatus !== 'failed';
+        document.getElementById('todoEditDialog').showModal();
+    }
+
+    closeTodoEditor() {
+        document.getElementById('todoEditDialog').close();
+        this.editingTodo = null;
+    }
+
+    openTodoFolder(item) {
+        var query = '?todoId=' + encodeURIComponent(item.id) + '&path=' + encodeURIComponent(item.localPath || '');
+        window.location.href = 'workboard://open' + query;
+    }
+
+    async saveTodoEdit() {
+        if (!this.editingTodo) return;
+        var payload = {
+            name: document.getElementById('todoEditName').value.trim(),
+            projectId: document.getElementById('todoEditProject').value,
+            projectName: document.getElementById('todoEditProjectName').value.trim(),
+            projectNumber: document.getElementById('todoEditProjectNumber').value.trim(),
+            contact: document.getElementById('todoEditContact').value.trim(),
+            taskDate: document.getElementById('todoEditDate').value,
+            dueAt: document.getElementById('todoEditDue').value,
+            progress: document.getElementById('todoEditProgress').value,
+            localPath: document.getElementById('todoEditLocalPath').value.trim(),
+            notes: document.getElementById('todoEditNotes').value.trim(),
+            resultDescription: document.getElementById('todoEditResultDescription').value.trim()
+        };
+        try {
+            await this.request('/todos/' + this.editingTodo.id, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            this.closeTodoEditor();
+            this.showNotice('任务已保存');
+            await this.load();
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
+    }
+
+    async retryArchive(id) {
+        try {
+            await this.request('/todos/' + id + '/archive/retry', { method: 'POST' });
+            this.closeTodoEditor();
+            this.showNotice('已重新加入归档队列');
+            await this.load();
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
     }
 
     renderHeatmap() {

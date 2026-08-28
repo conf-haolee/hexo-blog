@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="workboard-base-path" content="">
     <title>私人工作面板</title>
-    <link rel="stylesheet" href="style.css?v=20260825">
+    <link rel="stylesheet" href="style.css?v=20260826">
 </head>
 <body>
     <div class="shell">
@@ -60,17 +60,6 @@
 
             <section class="content-grid">
                 <div class="main-column">
-                    <section class="panel" id="sec-heatmap">
-                        <div class="section-head">
-                            <div>
-                                <p class="eyebrow">ACTIVITY</p>
-                                <h2>提交热力图</h2>
-                            </div>
-                            <span class="muted small">最近 365 天</span>
-                        </div>
-                        <div id="heatmap" class="heatmap" aria-label="提交热力图"></div>
-                    </section>
-
                     <section class="panel" id="sec-todos">
                         <div class="section-head">
                             <div>
@@ -91,6 +80,17 @@
                             <span class="muted small" id="projectResultCount">0 个结果</span>
                         </div>
                         <div id="projects" class="project-grid"></div>
+                    </section>
+
+                    <section class="panel" id="sec-heatmap">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">ACTIVITY</p>
+                                <h2>提交热力图</h2>
+                            </div>
+                            <span class="muted small">最近 365 天</span>
+                        </div>
+                        <div id="heatmap" class="heatmap" aria-label="提交热力图"></div>
                     </section>
                 </div>
 
@@ -155,6 +155,44 @@
         </main>
 
         <div id="notice" class="notice" role="status" aria-live="polite"></div>
+        <dialog id="todoEditDialog">
+            <div class="dialog-head">
+                <h2>编辑任务</h2>
+                <button class="icon-button" id="closeTodoEdit" type="button" aria-label="关闭">×</button>
+            </div>
+            <form id="todoEditForm" class="stack-form todo-edit-form">
+                <input id="todoEditName" required maxlength="200" placeholder="任务名称">
+                <div class="form-row">
+                    <select id="todoEditProject">
+                        <option value="">所属项目（可选）</option>
+                    </select>
+                    <input id="todoEditProjectName" maxlength="200" placeholder="临时项目名称">
+                </div>
+                <div class="form-row">
+                    <input id="todoEditProjectNumber" maxlength="80" placeholder="项目号（可选）">
+                    <input id="todoEditContact" maxlength="120" placeholder="联系人">
+                </div>
+                <div class="form-row">
+                    <label class="field-label">当前日期<input id="todoEditDate" type="date"></label>
+                    <label class="field-label">截止时间<input id="todoEditDue" type="datetime-local"></label>
+                </div>
+                <div class="form-row">
+                    <input id="todoEditProgress" type="number" min="0" max="100" step="1" placeholder="进度">
+                    <input id="todoEditLocalPath" maxlength="500" placeholder="本地路径，例如 ProjectA\Task01">
+                </div>
+                <textarea id="todoEditNotes" rows="4" maxlength="4000" placeholder="备注补充说明"></textarea>
+                <textarea id="todoEditResultDescription" rows="5" maxlength="8000" placeholder="结果描述"></textarea>
+                <div id="todoArchiveArea" class="archive-area" hidden>
+                    <p id="todoArchiveStatus" class="archive-status"></p>
+                    <p id="todoArchiveError" class="archive-error"></p>
+                    <button id="todoArchiveRetry" class="link-button" type="button">重试归档</button>
+                </div>
+                <div class="dialog-actions">
+                    <button class="button ghost" id="cancelTodoEdit" type="button">取消</button>
+                    <button class="button primary" type="submit">保存任务</button>
+                </div>
+            </form>
+        </dialog>
         <dialog id="summaryDialog">
             <div class="dialog-head">
                 <h2 id="summaryTitle">工作总结</h2>
@@ -164,6 +202,6 @@
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
     </div>
-    <script src="script.js?v=20260825"></script>
+    <script src="script.js?v=20260826"></script>
 </body>
 </html>

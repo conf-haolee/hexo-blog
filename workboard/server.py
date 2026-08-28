@@ -10,9 +10,10 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
 from collections import defaultdict
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PureWindowsPath
 from urllib import request as urllib_request
 
 from flask import (
@@ -28,6 +29,8 @@ from flask import (
     url_for,
 )
 from werkzeug.security import check_password_hash
+
+from archive_service import ArchiveStorage
 
 try:
     from git import Repo
@@ -53,6 +56,7 @@ AI_SETTINGS_FILE = DATA_DIR / "ai_settings.json"
 MAX_TODO_ITEMS = 12
 VISIBLE_TODO_ITEMS = 6
 TODO_MARKDOWN_FILE = "TODO.md"
+LOCAL_WORKBOARD_ROOT = PureWindowsPath(r"D:\01WorkBoard")
 DEFAULT_AI_SETTINGS = {
     "provider": "deepseek",
     "model": "deepseek-chat",
@@ -83,6 +87,10 @@ MAX_LOGIN_FAILURES = int(os.environ.get("WORKBOARD_MAX_LOGIN_FAILURES", "5"))
 LOGIN_WINDOW = timedelta(minutes=int(os.environ.get("WORKBOARD_LOGIN_WINDOW_MINUTES", "15")))
 LOGIN_FAILURES = defaultdict(list)
 PUBLIC_PATHS = {"/api/health", "/login", "/login.css", "/style.css"}
+AGENT_TOKEN = os.environ.get("WORKBOARD_AGENT_TOKEN", "")
+AGENT_ID_HEADER = "X-Workboard-Agent-Id"
+LEASE_TOKEN_HEADER = "X-Workboard-Lease-Token"
+ARCHIVE_LEASE_DURATION = timedelta(minutes=10)
 
 if SESSION_SECRET:
     app.secret_key = SESSION_SECRET
@@ -146,6 +154,14 @@ def init_db(connection):
             task_date TEXT NOT NULL DEFAULT '',
             screenshot_name TEXT NOT NULL DEFAULT '',
             screenshot_mime TEXT NOT NULL DEFAULT '',
+            result_description TEXT NOT NULL DEFAULT '',
+            local_path TEXT NOT NULL DEFAULT '',
+            archive_status TEXT NOT NULL DEFAULT '',
+            archive_error TEXT NOT NULL DEFAULT '',
+            archive_lease_until TEXT,
+            archive_lease_token TEXT NOT NULL DEFAULT '',
+            archive_agent_id TEXT NOT NULL DEFAULT '',
+            archive_completed_at TEXT,
             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
         );
         CREATE TABLE IF NOT EXISTS settings (
@@ -164,6 +180,14 @@ def init_db(connection):
         "task_date": "TEXT NOT NULL DEFAULT ''",
         "screenshot_name": "TEXT NOT NULL DEFAULT ''",
         "screenshot_mime": "TEXT NOT NULL DEFAULT ''",
+        "result_description": "TEXT NOT NULL DEFAULT ''",
+        "local_path": "TEXT NOT NULL DEFAULT ''",
+        "archive_status": "TEXT NOT NULL DEFAULT ''",
+        "archive_error": "TEXT NOT NULL DEFAULT ''",
+        "archive_lease_until": "TEXT",
+        "archive_lease_token": "TEXT NOT NULL DEFAULT ''",
+        "archive_agent_id": "TEXT NOT NULL DEFAULT ''",
+        "archive_completed_at": "TEXT",
     }
     for column, definition in migrations.items():
         if column not in todo_columns:
@@ -214,6 +238,9 @@ def enforce_access_boundary():
     if request.path == "/api/health":
         return None
 
+    if request.path.startswith("/api/agent/"):
+        return enforce_agent_access()
+
     if AUTH_MODE not in {"password", "cloudflare"}:
         return configuration_error("Authentication mode is not configured")
 
@@ -245,6 +272,24 @@ def enforce_access_boundary():
 
 def password_auth_is_configured():
     return bool(PASSWORD_HASH and SESSION_SECRET)
+
+
+def verify_agent_token(request_token: str, configured_token: str) -> bool:
+    return bool(
+        request_token
+        and configured_token
+        and secrets.compare_digest(str(request_token), str(configured_token))
+    )
+
+
+def enforce_agent_access():
+    if not AGENT_TOKEN:
+        return jsonify({"error": "Archive agent token is not configured"}), 503
+    authorization = request.headers.get("Authorization", "")
+    parts = authorization.split(" ")
+    if len(parts) != 2 or parts[0] != "Bearer" or not parts[1] or not verify_agent_token(parts[1], AGENT_TOKEN):
+        return jsonify({"error": "Archive agent authentication required"}), 401
+    return None
 
 
 def is_api_request():
@@ -504,6 +549,92 @@ def validate_progress(value, default=0):
     return progress
 
 
+def normalize_local_path(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    path = PureWindowsPath(raw)
+    if path.drive or path.root:
+        try:
+            parts = list(path.relative_to(LOCAL_WORKBOARD_ROOT).parts)
+        except ValueError as exc:
+            raise ValueError("Local path must be under D:\\01WorkBoard") from exc
+    else:
+        parts = list(path.parts)
+
+    normalized = []
+    for part in parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not normalized:
+                raise ValueError("Local path must stay under D:\\01WorkBoard")
+            normalized.pop()
+        else:
+            normalized.append(part)
+    return "\\".join(normalized)
+
+
+def payload_text(payload, key, current, limit):
+    value = payload[key] if key in payload else current
+    return str(value or "").strip()[:limit]
+
+
+def apply_todo_payload(item, payload):
+    name = payload_text(payload, "name", item["name"], 200)
+    if not name:
+        raise ValueError("Task name is required")
+    item["name"] = name
+    item["projectNumber"] = payload_text(
+        payload, "projectNumber", item["projectNumber"], 80
+    )
+    item["contact"] = payload_text(payload, "contact", item["contact"], 120)
+    item["notes"] = payload_text(payload, "notes", item["notes"], 4000)
+    item["resultDescription"] = payload_text(
+        payload, "resultDescription", item["resultDescription"], 8000
+    )
+    item["localPath"] = normalize_local_path(
+        payload_text(payload, "localPath", item["localPath"], 500)
+    )
+    item["taskDate"] = validate_date(
+        payload["taskDate"] if "taskDate" in payload else item["taskDate"]
+    )
+    item["dueAt"] = validate_due_at(
+        payload["dueAt"] if "dueAt" in payload else item["dueAt"]
+    )
+    item["progress"] = validate_progress(
+        payload["progress"] if "progress" in payload else item["progress"],
+        default=item["progress"],
+    )
+    if "projectId" in payload:
+        project_id = payload["projectId"]
+        if project_id in (None, ""):
+            item["projectId"] = None
+            item["projectName"] = (
+                payload_text(payload, "projectName", "Temporary work", 200)
+                or "Temporary work"
+            )
+        else:
+            try:
+                project_id = int(project_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("A valid project must be selected") from exc
+            project = next(
+                (project for project in load_projects() if project["id"] == project_id), None
+            )
+            if project is None:
+                raise LookupError("Project not found")
+            item["projectId"] = project_id
+            item["projectName"] = project["name"]
+    elif "projectName" in payload:
+        item["projectId"] = None
+        item["projectName"] = (
+            payload_text(payload, "projectName", "Temporary work", 200)
+            or "Temporary work"
+        )
+    return item
+
+
 def sanitize_task_name(name):
     value = re.sub(r'[<>:"/\\|?*]+', " ", str(name or "").strip())
     value = re.sub(r"\s+", " ", value).strip().rstrip(".")
@@ -544,6 +675,11 @@ def todo_row_to_dict(row):
         "taskDate": row["task_date"],
         "screenshotName": row["screenshot_name"],
         "screenshotMime": row["screenshot_mime"],
+        "resultDescription": row["result_description"],
+        "localPath": row["local_path"],
+        "archiveStatus": row["archive_status"],
+        "archiveError": row["archive_error"],
+        "archiveCompletedAt": row["archive_completed_at"],
     }
     item["screenshotUrl"] = (
         f"/api/todos/{item['id']}/screenshot" if item["screenshotName"] else None
@@ -586,6 +722,14 @@ def row_to_mutable_todo(row):
         "taskDate": row["task_date"],
         "screenshotName": row["screenshot_name"],
         "screenshotMime": row["screenshot_mime"],
+        "resultDescription": row["result_description"],
+        "localPath": row["local_path"],
+        "archiveStatus": row["archive_status"],
+        "archiveError": row["archive_error"],
+        "archiveLeaseUntil": row["archive_lease_until"],
+        "archiveLeaseToken": row["archive_lease_token"],
+        "archiveAgentId": row["archive_agent_id"],
+        "archiveCompletedAt": row["archive_completed_at"],
     }
 
 
@@ -594,7 +738,9 @@ def save_todo(item):
         """
         UPDATE todos SET order_no=?, name=?, project_id=?, project_name=?, created_at=?,
         completed_at=?, due_at=?, progress=?, status=?, folder_name=?, project_number=?,
-        contact=?, notes=?, task_date=?, screenshot_name=?, screenshot_mime=? WHERE id=?
+        contact=?, notes=?, task_date=?, screenshot_name=?, screenshot_mime=?,
+        result_description=?, local_path=?, archive_status=?, archive_error=?,
+        archive_lease_until=?, archive_lease_token=?, archive_agent_id=?, archive_completed_at=? WHERE id=?
         """,
         (
             item["orderNo"],
@@ -613,6 +759,14 @@ def save_todo(item):
             item["taskDate"],
             item["screenshotName"],
             item["screenshotMime"],
+            item["resultDescription"],
+            item["localPath"],
+            item["archiveStatus"],
+            item["archiveError"],
+            item["archiveLeaseUntil"],
+            item["archiveLeaseToken"],
+            item["archiveAgentId"],
+            item["archiveCompletedAt"],
             item["id"],
         ),
     )
@@ -631,13 +785,24 @@ def todo_markdown(item):
             f"- Project number: {item['projectNumber'] or 'Not set'}",
             f"- Contact: {item['contact'] or 'Not set'}",
             f"- Task date: {item['taskDate']}",
+            f"- Local path: {item['localPath'] or 'Not set'}",
             f"- Created: {item['createdAt']}",
             f"- Due: {item['dueAt'] or 'Not set'}",
             f"- Completed: {item['completedAt'] or 'Not completed'}",
+            f"- Archive status: {item['archiveStatus'] or 'Not started'}",
+            f"- Archive completed: {item['archiveCompletedAt'] or 'Not completed'}",
             "",
             "## Notes",
             "",
             item["notes"] or "Add progress notes, evidence, screenshots and delivery details here.",
+            "",
+            "## Result Description",
+            "",
+            item["resultDescription"] or "No result description recorded.",
+            "",
+            "## Archive Error",
+            "",
+            item["archiveError"] or "None",
             "",
             "## Screenshot",
             "",
@@ -660,6 +825,100 @@ def serialize_todo(item):
         f"/api/todos/{item['id']}/screenshot" if item["screenshotName"] else None
     )
     return result
+
+
+def archive_storage():
+    return ArchiveStorage(DATA_DIR / ".archive-staging", DONE_DIR)
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def utc_timestamp(value=None):
+    return (value or utc_now()).isoformat(timespec="seconds")
+
+
+def lease_is_active(item, now=None):
+    raw_lease = item.get("archiveLeaseUntil")
+    if not raw_lease:
+        return False
+    try:
+        lease_until = datetime.fromisoformat(raw_lease)
+        if lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return lease_until > (now or utc_now())
+
+
+def agent_id_from_request(payload=None):
+    header_value = request.headers.get(AGENT_ID_HEADER, "").strip()
+    payload_value = str((payload or {}).get("agentId") or "").strip()
+    if header_value and payload_value and header_value != payload_value:
+        raise ValueError("Archive agent id does not match the request header")
+    agent_id = header_value or payload_value
+    if not agent_id:
+        raise ValueError("Archive agent id is required")
+    return agent_id[:120]
+
+
+def require_active_agent_lease(todo_id, allow_done=False):
+    item = find_todo(todo_id)
+    if item is None:
+        return None, (jsonify({"error": "Archive job not found"}), 404)
+    try:
+        agent_id = agent_id_from_request()
+    except ValueError as exc:
+        return None, (jsonify({"error": str(exc)}), 400)
+    lease_token = request.headers.get(LEASE_TOKEN_HEADER, "")
+    if ((item["status"] != "archive_pending" and not (allow_done and item["status"] == "done")) or item["archiveAgentId"] != agent_id
+            or not lease_token or not item["archiveLeaseToken"]
+            or not secrets.compare_digest(lease_token, item["archiveLeaseToken"])
+            or not lease_is_active(item)):
+        return None, (jsonify({"error": "Archive job is not leased to this agent"}), 409)
+    return item, None
+
+
+def archive_todo_folder_path(base_dir, folder_name):
+    folder = ArchiveStorage._folder_name(folder_name)
+    path = Path(base_dir) / folder
+    ArchiveStorage._require_under(path, base_dir)
+    return path
+
+
+def move_todo_folder_to_done(item):
+    source = archive_todo_folder_path(TODO_DIR, item["folderName"])
+    target = archive_todo_folder_path(DONE_DIR, item["folderName"])
+    target.mkdir(parents=True, exist_ok=True)
+    if not source.exists():
+        write_text_atomically(target / TODO_MARKDOWN_FILE, todo_markdown(item))
+        return
+    write_text_atomically(source / TODO_MARKDOWN_FILE, todo_markdown(item))
+    children = list(source.iterdir())
+    for child in children:
+        destination = target / child.name
+        ArchiveStorage._require_under(destination, target)
+        if destination.exists():
+            if not child.is_file() or not destination.is_file() or child.read_bytes() != destination.read_bytes():
+                raise RuntimeError("Archive destination already contains a task file")
+    for child in source.iterdir():
+        destination = target / child.name
+        os.replace(child, destination)
+    source.rmdir()
+
+
+def write_text_atomically(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".part", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(value)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def setting_get(key, default=None):
@@ -934,6 +1193,10 @@ def create_todo():
         task_date = validate_date(
             payload.get("taskDate") or datetime.now().strftime("%Y-%m-%d")
         )
+        result_description = str(payload.get("resultDescription") or "").strip()[:8000]
+        local_path = normalize_local_path(
+            str(payload.get("localPath") or "").strip()[:500]
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -975,9 +1238,11 @@ def create_todo():
         """
         INSERT INTO todos
         (order_no, name, project_id, project_name, created_at, due_at, progress, status,
-         folder_name, project_number, contact, notes, task_date, screenshot_name, screenshot_mime)
+         folder_name, project_number, contact, notes, task_date, screenshot_name, screenshot_mime,
+          result_description, local_path, archive_status, archive_error, archive_lease_until, archive_lease_token,
+         archive_agent_id, archive_completed_at)
         VALUES ((SELECT COALESCE(MAX(order_no), 0) + 1 FROM todos), ?, ?, ?, ?, ?, ?, 'todo',
-                ?, ?, ?, ?, ?, ?, ?)
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', NULL, '', '', NULL)
         """,
         (
             name,
@@ -993,6 +1258,8 @@ def create_todo():
             task_date,
             screenshot_name,
             screenshot_mime,
+            result_description,
+            local_path,
         ),
     )
     db.commit()
@@ -1004,24 +1271,35 @@ def create_todo():
 
 
 @app.route("/api/todos/<int:todo_id>", methods=["PATCH"])
-def rename_todo(todo_id):
-    payload = request.get_json(silent=True) or {}
+def update_todo(todo_id):
+    is_form_submission = request.mimetype == "multipart/form-data"
+    payload = request.form.to_dict() if is_form_submission else (request.get_json(silent=True) or {})
     item = find_todo(todo_id)
-    name = str(payload.get("name") or "").strip()
     if item is None:
         return jsonify({"error": "Todo item not found"}), 404
-    if not name:
-        return jsonify({"error": "Task name is required"}), 400
     try:
-        item["dueAt"] = validate_due_at(payload.get("dueAt"))
-        item["progress"] = validate_progress(payload.get("progress"), default=item["progress"])
+        apply_todo_payload(item, payload)
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    screenshot = request.files.get("screenshot")
+    if screenshot and screenshot.filename:
+        screenshot_mime = str(screenshot.mimetype or "").lower()
+        extensions = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        if screenshot_mime not in extensions:
+            return jsonify({"error": "Screenshot must be PNG, JPEG, WebP or GIF"}), 400
+        item["screenshotName"] = "screenshot" + extensions[screenshot_mime]
+        item["screenshotMime"] = screenshot_mime
     old_folder = todo_folder(item)
-    item["name"] = name
     item["folderName"] = safe_folder_name(
         DONE_DIR if item["status"] == "done" else TODO_DIR,
-        sanitize_task_name(name),
+        sanitize_task_name(item["name"]),
         current_name=item["folderName"],
     )
     new_folder = todo_folder(item)
@@ -1029,6 +1307,8 @@ def rename_todo(todo_id):
         old_folder.rename(new_folder)
     save_todo(item)
     sync_todo_markdown(item)
+    if screenshot and screenshot.filename:
+        screenshot.save(todo_folder(item) / item["screenshotName"])
     return jsonify({"success": True, "item": serialize_todo(item)})
 
 
@@ -1047,20 +1327,178 @@ def update_todo_progress(todo_id):
     return jsonify({"success": True, "item": serialize_todo(item)})
 
 
+@app.route("/api/agent/jobs/claim", methods=["POST"])
+def claim_archive_job():
+    payload = request.get_json(silent=True) or {}
+    try:
+        agent_id = agent_id_from_request(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    now = utc_now()
+    supplied_lease_token = str(payload.get("leaseToken") or "")
+    db = get_db(); db.execute("BEGIN IMMEDIATE")
+    active = db.execute("SELECT * FROM todos WHERE status='archive_pending' AND archive_agent_id=? ORDER BY id", (agent_id,)).fetchall()
+    for row in active:
+        item = row_to_mutable_todo(row)
+        if lease_is_active(item) and supplied_lease_token and item["archiveLeaseToken"] and secrets.compare_digest(supplied_lease_token, item["archiveLeaseToken"]):
+            item["archiveLeaseUntil"] = utc_timestamp(now + ARCHIVE_LEASE_DURATION)
+            save_todo(item)
+            return jsonify({"success": True, "job": serialize_todo(item), "leaseToken": item["archiveLeaseToken"]})
+    row = db.execute(
+        """
+        SELECT * FROM todos
+        WHERE status = 'archive_pending'
+          AND archive_status IN ('pending', 'claimed', 'committed')
+          AND (archive_lease_until IS NULL OR archive_lease_until <= ?)
+        ORDER BY order_no, id
+        LIMIT 1
+        """,
+        (utc_timestamp(now),),
+    ).fetchone()
+    if row is None:
+        db.commit()
+        return "", 204
+    item = row_to_mutable_todo(row)
+    if item["archiveStatus"] != "committed":
+        item["archiveStatus"] = "claimed"
+    item["archiveError"] = ""
+    item["archiveLeaseUntil"] = utc_timestamp(now + ARCHIVE_LEASE_DURATION)
+    item["archiveLeaseToken"] = secrets.token_urlsafe(32)
+    item["archiveAgentId"] = agent_id
+    save_todo(item)
+    return jsonify({"success": True, "job": serialize_todo(item), "leaseToken": item["archiveLeaseToken"]})
+
+
+@app.route("/api/agent/jobs/<int:todo_id>/files", methods=["PUT"])
+def upload_archive_file(todo_id):
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"error": "Archive file is required"}), 400
+    item = None
+    try:
+        storage = archive_storage()
+        with storage.task_lock(todo_id):
+            item, error_response = require_active_agent_lease(todo_id)
+            if error_response:
+                return error_response
+            if item["archiveStatus"] == "committed":
+                storage.verify_committed_upload_locked(todo_id, item["folderName"], request.form.get("relativePath"), upload.stream, request.form.get("expectedSize"), request.form.get("expectedSha256"))
+            else:
+                storage.store_file_locked(todo_id, request.form.get("relativePath"), upload.stream, request.form.get("expectedSize"), request.form.get("expectedSha256"))
+    except TimeoutError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except (OSError, ValueError) as exc:
+        status_code = 409 if item is not None and item["archiveStatus"] == "committed" else 400
+        return jsonify({"error": str(exc)}), status_code
+    return jsonify({"success": True, "path": str(request.form.get("relativePath") or "").replace("\\", "/")})
+
+
+@app.route("/api/agent/jobs/<int:todo_id>/commit", methods=["POST"])
+def commit_archive_job(todo_id):
+    item = None
+    try:
+        storage = archive_storage()
+        with storage.task_lock(todo_id):
+            item, error_response = require_active_agent_lease(todo_id)
+            if error_response:
+                return error_response
+            storage.commit_locked(todo_id, item["folderName"], (request.get_json(silent=True) or {}).get("manifest"))
+    except TimeoutError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except (OSError, ValueError, FileNotFoundError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    item["archiveStatus"] = "committed"
+    item["archiveError"] = ""
+    save_todo(item)
+    sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/agent/jobs/<int:todo_id>/finish", methods=["POST"])
+def finish_archive_job(todo_id):
+    item = None
+    try:
+        storage = archive_storage()
+        with storage.task_lock(todo_id):
+            item, error_response = require_active_agent_lease(todo_id, allow_done=True)
+            if error_response:
+                return error_response
+            if item["archiveStatus"] not in {"committed", "complete"}:
+                return jsonify({"error": "Archive files must be committed before finishing"}), 409
+            storage.verify_committed_locked(todo_id, item["folderName"])
+            final_item = dict(item); final_item.update(status="done", progress=100)
+            move_todo_folder_to_done(final_item)
+            if item["status"] == "done" and item["archiveStatus"] == "complete":
+                return jsonify({"success": True, "item": serialize_todo(item)})
+            completed_at = utc_timestamp()
+            item["status"] = "done"
+            item["progress"] = 100
+            item["completedAt"] = completed_at
+            item["archiveStatus"] = "complete"
+            item["archiveError"] = ""
+            item["archiveCompletedAt"] = completed_at
+            save_todo(item)
+            sync_todo_markdown(item)
+            return jsonify({"success": True, "item": serialize_todo(item)})
+    except TimeoutError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except (OSError, RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/agent/jobs/<int:todo_id>/fail", methods=["POST"])
+def fail_archive_job(todo_id):
+    item = find_todo(todo_id)
+    if item is None:
+        return jsonify({"error": "Archive job not found"}), 404
+    try:
+        agent_id = agent_id_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    item, error_response = require_active_agent_lease(todo_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    item["archiveStatus"] = "failed"
+    item["archiveError"] = str(payload.get("error") or "Archive agent reported failure").strip()[:1000]
+    item["archiveLeaseUntil"] = None
+    item["archiveLeaseToken"] = ""
+    save_todo(item)
+    sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/todos/<int:todo_id>/archive/retry", methods=["POST"])
+def retry_todo_archive(todo_id):
+    try:
+        storage = archive_storage()
+        with storage.task_lock(todo_id):
+            item = find_todo(todo_id)
+            if item is None:
+                return jsonify({"error": "Todo item not found"}), 404
+            if item["status"] != "archive_pending" or item["archiveStatus"] != "failed":
+                return jsonify({"error": "Archive is not retryable"}), 409
+            storage.reset_locked(todo_id)
+    except (OSError, ValueError, TimeoutError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    item["archiveStatus"] = "pending"; item["archiveError"] = ""; item["archiveLeaseUntil"] = None; item["archiveLeaseToken"] = ""; item["archiveAgentId"] = ""
+    save_todo(item); sync_todo_markdown(item)
+    return jsonify({"success": True, "item": serialize_todo(item)})
+
+
 @app.route("/api/todos/<int:todo_id>/complete", methods=["POST"])
 def complete_todo(todo_id):
     item = find_todo(todo_id)
     if item is None:
         return jsonify({"error": "Todo item not found"}), 404
-    if item["status"] != "done":
-        source = todo_folder(item)
-        item["status"] = "done"
-        item["completedAt"] = datetime.now().isoformat(timespec="seconds")
-        item["progress"] = 100
-        item["folderName"] = safe_folder_name(DONE_DIR, item["folderName"])
-        target = todo_folder(item)
-        if source.exists() and source != target:
-            source.rename(target)
+    if item["status"] == "todo":
+        item["status"] = "archive_pending"
+        item["archiveStatus"] = "pending"
+        item["archiveError"] = ""
+        item["archiveLeaseUntil"] = None
+        item["archiveLeaseToken"] = ""
+        item["archiveAgentId"] = ""
+        item["archiveCompletedAt"] = None
         save_todo(item)
         sync_todo_markdown(item)
     return jsonify({"success": True, "item": serialize_todo(item)})

@@ -130,6 +130,17 @@ class PasswordAuthenticationTests(unittest.TestCase):
         response.close()
         self.assertIn("logoutButton", (ROOT / "static" / "index.html").read_text(encoding="utf-8"))
 
+    def test_dashboard_stylesheet_is_public_and_has_css_mime_type(self):
+        response = self.client.get("/style.css")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content_type.startswith("text/css"))
+        self.assertIn("--bg-primary", response.get_data(as_text=True))
+        response.close()
+
+    def test_dashboard_uses_a_versioned_stylesheet_url(self):
+        dashboard = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('href="style.css?v=', dashboard)
+
 
 if __name__ == "__main__":
     unittest.main()
