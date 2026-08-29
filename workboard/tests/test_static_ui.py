@@ -26,6 +26,7 @@ class StaticUITest(unittest.TestCase):
     def setUp(self):
         self.html = (STATIC / "index.html").read_text(encoding="utf-8")
         self.script = (STATIC / "script.js").read_text(encoding="utf-8")
+        self.css = (STATIC / "style.css").read_text(encoding="utf-8")
         self.parser = StaticElementParser()
         self.parser.feed(self.html)
 
@@ -57,6 +58,26 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("project.localPath", self.script)
         self.assertIn("gitInfo.commits.slice(0, 3)", self.script)
         self.assertIn("project-commit-list", self.script)
+
+    def test_quick_find_precedes_compact_status_cards(self):
+        ids = self.parser.ids
+        self.assertLess(ids.index("searchInput"), ids.index("projectCount"))
+        self.assertLess(ids.index("searchInput"), ids.index("todoCount"))
+        self.assertLess(ids.index("searchInput"), ids.index("commitCount"))
+        self.assertIn("compact-status", self.parser.by_id["statusCards"]["attrs"].get("class", ""))
+        self.assertIn(".compact-status .hero-card", self.css)
+
+    def test_dashboard_uses_panel_names_and_overflow_safe_due_row(self):
+        self.assertIn("<h2>任务面板</h2>", self.html)
+        self.assertIn("<h2>项目面板</h2>", self.html)
+        self.assertIn("capture-date-row", self.html)
+        self.assertIn(".capture-date-row", self.css)
+        self.assertIn("minmax(0, 1fr)", self.css)
+
+    def test_project_card_double_click_prompts_without_local_path(self):
+        self.assertIn("card.addEventListener('dblclick'", self.script)
+        self.assertIn("this.openProjectFolder(project)", self.script)
+        self.assertIn("项目未配置本地路径", self.script)
 
 
 if __name__ == "__main__":

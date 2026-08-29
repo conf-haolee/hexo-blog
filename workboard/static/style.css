@@ -185,6 +185,29 @@ body {
     padding: 24px 28px;
 }
 
+.compact-status {
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.compact-status .hero-card {
+    min-height: 96px;
+    padding: 14px 18px;
+}
+
+.compact-status .hero-card-head {
+    margin-bottom: 2px;
+}
+
+.compact-status .hero-number {
+    font-size: 30px;
+    margin: 4px 0 2px;
+}
+
+.compact-status .progress-line {
+    margin-top: 8px;
+}
+
 .hero-card.accent {
     border-color: var(--border-strong);
     background: linear-gradient(135deg, rgba(122, 182, 255, 0.07), rgba(24, 33, 43, 0.96));
@@ -526,12 +549,21 @@ body {
     gap: 10px;
 }
 
+.capture-date-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.capture-date-row input {
+    min-width: 0;
+}
+
 .field-label {
     display: flex;
     flex-direction: column;
     gap: 6px;
     color: var(--text-muted);
     font-size: 12px;
+    min-width: 0;
 }
 
 .paste-zone {

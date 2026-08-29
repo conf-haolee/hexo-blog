@@ -168,10 +168,8 @@
         var tags = (project.tags || []).map(tag => '<span class="tag">' + this.escape(tag) + '</span>').join('');
         var categories = (project.categories || []).map(tag => '<span class="category">' + this.escape(tag) + '</span>').join('');
         var commits = this.projectCommitList(project);
-        if (project.localPath) {
-            card.classList.add('openable');
-            card.title = '双击打开本地路径：' + project.localPath;
-        }
+        card.classList.add('openable');
+        card.title = project.localPath ? '双击打开本地路径：' + project.localPath : '双击提示配置本地路径';
         card.innerHTML =
             '<div class="card-top"><span class="project-id">#' + project.id + '</span>' +
             '<span class="path-label">' + this.escape(project.pathLabel || '路径未配置') + '</span></div>' +

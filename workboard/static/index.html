@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="workboard-base-path" content="">
     <title>私人工作面板</title>
-    <link rel="stylesheet" href="style.css?v=20260829">
+    <link rel="stylesheet" href="style.css?v=20260829-2">
 </head>
 <body>
     <div class="shell">
@@ -23,7 +23,21 @@
         </header>
 
         <main>
-            <section class="hero-grid">
+            <section class="toolbar panel">
+                <div>
+                    <p class="eyebrow">QUICK FIND</p>
+                    <label class="search">
+                        <span aria-hidden="true">⌕</span>
+                        <input id="searchInput" type="search" placeholder="搜索项目、标签、分类或描述">
+                    </label>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="button ghost" id="summaryToday" type="button">今日总结</button>
+                    <button class="button primary" id="summaryWeek" type="button">本周总结</button>
+                </div>
+            </section>
+
+            <section class="hero-grid compact-status" id="statusCards">
                 <article class="hero-card hero-card-link" onclick="document.getElementById('sec-projects').scrollIntoView({behavior:'smooth'})" title="查看项目列表">
                     <div class="hero-card-head">
                         <span class="status-dot" id="serverStatusDot"></span>
@@ -44,27 +58,13 @@
                 </article>
             </section>
 
-            <section class="toolbar panel">
-                <div>
-                    <p class="eyebrow">QUICK FIND</p>
-                    <label class="search">
-                        <span aria-hidden="true">⌕</span>
-                        <input id="searchInput" type="search" placeholder="搜索项目、标签、分类或描述">
-                    </label>
-                </div>
-                <div class="toolbar-actions">
-                    <button class="button ghost" id="summaryToday" type="button">今日总结</button>
-                    <button class="button primary" id="summaryWeek" type="button">本周总结</button>
-                </div>
-            </section>
-
             <section class="content-grid">
                 <div class="main-column">
                     <section class="panel" id="sec-todos">
                         <div class="section-head">
                             <div>
                                 <p class="eyebrow">IN PROGRESS</p>
-                                <h2>当前处理任务</h2>
+                                <h2>任务面板</h2>
                             </div>
                             <span class="muted small" id="todoLimit">0 / 12</span>
                         </div>
@@ -75,7 +75,7 @@
                         <div class="section-head">
                             <div>
                                 <p class="eyebrow">PROJECTS</p>
-                                <h2>项目索引</h2>
+                                <h2>项目面板</h2>
                             </div>
                             <span class="muted small" id="projectResultCount">0 个结果</span>
                         </div>
@@ -111,7 +111,7 @@
                                 <input id="todoProjectNumber" maxlength="80" placeholder="项目号（可选）">
                             </div>
                             <input id="todoContact" required maxlength="120" placeholder="联系人">
-                            <div class="form-row">
+                            <div class="form-row capture-date-row">
                                 <label class="field-label">当前日期<input id="todoDate" required type="date"></label>
                                 <label class="field-label">截止时间<input id="todoDue" required type="datetime-local"></label>
                             </div>
@@ -202,6 +202,6 @@
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
     </div>
-    <script src="script.js?v=20260829"></script>
+    <script src="script.js?v=20260829-2"></script>
 </body>
 </html>
