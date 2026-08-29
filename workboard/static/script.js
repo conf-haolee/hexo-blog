@@ -167,6 +167,11 @@
         var pathStatus = project.pathStatus || {};
         var tags = (project.tags || []).map(tag => '<span class="tag">' + this.escape(tag) + '</span>').join('');
         var categories = (project.categories || []).map(tag => '<span class="category">' + this.escape(tag) + '</span>').join('');
+        var commits = this.projectCommitList(project);
+        if (project.localPath) {
+            card.classList.add('openable');
+            card.title = '双击打开本地路径：' + project.localPath;
+        }
         card.innerHTML =
             '<div class="card-top"><span class="project-id">#' + project.id + '</span>' +
             '<span class="path-label">' + this.escape(project.pathLabel || '路径未配置') + '</span></div>' +
@@ -177,8 +182,25 @@
             '<span class="path-state ' + (pathStatus.nasExists ? 'good' : '') + '">NAS ' + (pathStatus.nasExists ? '可用' : '未连接') + '</span>' +
             '<span class="path-state ' + (git ? 'good' : '') + '">' + (git ? this.escape(git.branch) : '无 Git 信息') + '</span>' +
             '</div>' +
-            (git ? '<div class="commit-line">' + this.escape(git.last_commit.message) + '<span>' + this.escape(git.last_commit.relative_date) + '</span></div>' : '');
+            commits;
+        card.addEventListener('dblclick', event => {
+            event.stopPropagation();
+            this.openProjectFolder(project);
+        });
         return card;
+    }
+
+    projectCommitList(project) {
+        var gitInfo = project.gitInfo || {};
+        var commits = gitInfo.commits ? gitInfo.commits.slice(0, 3) : [];
+        if (!commits.length) return '';
+        return '<div class="project-commit-list">' + commits.map(commit => {
+            return '<div class="project-commit">' +
+                '<span class="commit-message">' + this.escape(commit.message || '') + '</span>' +
+                '<span class="commit-meta">' + this.escape(commit.relative_date || commit.date || '') +
+                ' · ' + this.escape(commit.hash || '') + '</span>' +
+                '</div>';
+        }).join('') + '</div>';
     }
 
     renderTodos() {
@@ -287,6 +309,19 @@
     openTodoFolder(item) {
         var query = '?todoId=' + encodeURIComponent(item.id) + '&path=' + encodeURIComponent(item.localPath || '');
         window.location.href = 'workboard://open' + query;
+    }
+
+    async openProjectFolder(project) {
+        if (!project.localPath) {
+            this.showNotice('项目未配置本地路径', true);
+            return;
+        }
+        try {
+            await this.request('/project/' + project.id + '/open', { method: 'POST' });
+            this.showNotice('已请求打开本地项目路径');
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
     }
 
     async saveTodoEdit() {

@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -465,6 +466,7 @@ def row_to_project(row):
         "categories": json_list(row["categories_json"]),
         "tags": json_list(row["tags_json"]),
         "created": row["created"],
+        "localPath": local_path,
         "gitInfo": get_git_info(row["git_repo"]),
         "pathStatus": {
             "localExists": local_exists,
@@ -1184,9 +1186,25 @@ def update_ai_settings():
     return jsonify({"success": True, "settings": serialize_ai_settings(settings)})
 
 
-@app.route("/api/project/<int:project_id>/open")
-def project_open_removed(project_id):
-    return jsonify({"error": "Local folder opening is disabled in remote mode"}), 410
+def open_path_in_explorer(path):
+    subprocess.Popen(["explorer.exe", str(path)])
+
+
+@app.route("/api/project/<int:project_id>/open", methods=["GET", "POST"])
+def open_project_folder(project_id):
+    if request.method != "POST":
+        return jsonify({"error": "Local folder opening requires a POST request"}), 410
+    row = get_db().execute("SELECT local_path FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        return jsonify({"error": "Project not found"}), 404
+    local_path = str(row["local_path"] or "").strip()
+    if not local_path:
+        return jsonify({"error": "Project local path is not configured"}), 409
+    path = Path(local_path).expanduser().resolve(strict=False)
+    if not path.exists():
+        return jsonify({"error": "Project local path does not exist"}), 404
+    open_path_in_explorer(path)
+    return jsonify({"success": True, "path": str(path)})
 
 
 @app.route("/api/folder/select", methods=["POST"])

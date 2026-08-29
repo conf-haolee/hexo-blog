@@ -50,6 +50,14 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("workboard://open", self.script)
         self.assertIn("archive/retry", self.script)
 
+    def test_project_cards_open_local_paths_and_show_three_git_commits(self):
+        for handler in ("openProjectFolder", "projectCommitList"):
+            with self.subTest(handler=handler):
+                self.assertRegex(self.script, r"\b" + re.escape(handler) + r"\s*\(")
+        self.assertIn("project.localPath", self.script)
+        self.assertIn("gitInfo.commits.slice(0, 3)", self.script)
+        self.assertIn("project-commit-list", self.script)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -679,14 +679,17 @@ class WorkboardApiTests(unittest.TestCase):
         self.assertEqual(response.json["storage"], "sqlite")
         self.assertNotIn("todo_workspace", response.json)
 
-    def test_project_and_todo_flow_hides_paths(self):
+    def test_project_and_todo_flow_exposes_local_path_but_hides_nas_path(self):
         access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
         project_dir = Path(self.temp_dir.name) / "project"
+        local_dir = Path(self.temp_dir.name) / "local-project"
         project_dir.mkdir()
+        local_dir.mkdir()
         response = self.client.post(
             "/api/projects",
             json={
                 "name": "Private project",
+                "localPath": str(local_dir),
                 "nasPath": str(project_dir),
                 "gitRepo": "",
                 "created": "2026-07-13",
@@ -697,7 +700,7 @@ class WorkboardApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("nasPath", response.json["item"])
-        self.assertNotIn("localPath", response.json["item"])
+        self.assertEqual(response.json["item"]["localPath"], str(local_dir))
 
         response = self.client.post(
             "/api/todos",
@@ -714,6 +717,30 @@ class WorkboardApiTests(unittest.TestCase):
 
         response = self.client.get("/api/todos/%s/open" % todo_id, headers=access_headers)
         self.assertEqual(response.status_code, 410)
+
+    def test_project_open_launches_existing_local_path(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        local_dir = Path(self.temp_dir.name) / "local-project"
+        local_dir.mkdir()
+        response = self.client.post(
+            "/api/projects",
+            json={
+                "name": "Openable project",
+                "localPath": str(local_dir),
+                "gitRepo": "",
+                "created": "2026-07-13",
+            },
+            headers=access_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        with patch("server.open_path_in_explorer") as opener:
+            response = self.client.post("/api/project/1/open", headers=access_headers)
+
+        self.assertEqual(response.status_code, 200)
+        expected_path = local_dir.resolve(strict=False)
+        self.assertEqual(response.json["path"], str(expected_path))
+        opener.assert_called_once_with(expected_path)
 
     def test_create_todo_accepts_detail_fields_and_screenshot(self):
         access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
