@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="workboard-base-path" content="">
     <title>私人工作面板</title>
-    <link rel="stylesheet" href="style.css?v=20260829-2">
+    <link rel="stylesheet" href="style.css?v=20260830-archive">
 </head>
 <body>
     <div class="shell">
@@ -37,27 +37,6 @@
                 </div>
             </section>
 
-            <section class="hero-grid compact-status" id="statusCards">
-                <article class="hero-card hero-card-link" onclick="document.getElementById('sec-projects').scrollIntoView({behavior:'smooth'})" title="查看项目列表">
-                    <div class="hero-card-head">
-                        <span class="status-dot" id="serverStatusDot"></span>
-                        <span id="serverStatus">检查服务状态...</span>
-                    </div>
-                    <p class="hero-number" id="projectCount">0</p>
-                    <p class="muted">已跟踪项目</p>
-                </article>
-                <article class="hero-card accent hero-card-link" onclick="document.getElementById('sec-todos').scrollIntoView({behavior:'smooth'})" title="查看待办任务">
-                    <p class="hero-number" id="todoCount">0</p>
-                    <p class="muted">待处理任务</p>
-                    <div class="progress-line"><span id="todoProgress"></span></div>
-                </article>
-                <article class="hero-card hero-card-link" onclick="document.getElementById('sec-heatmap').scrollIntoView({behavior:'smooth'})" title="查看提交热力图">
-                    <p class="hero-number" id="commitCount">0</p>
-                    <p class="muted">近一年提交记录</p>
-                    <p class="small muted" id="lastUpdated">--</p>
-                </article>
-            </section>
-
             <section class="content-grid">
                 <div class="main-column">
                     <section class="panel" id="sec-todos">
@@ -66,9 +45,13 @@
                                 <p class="eyebrow">IN PROGRESS</p>
                                 <h2>任务面板</h2>
                             </div>
-                            <span class="muted small" id="todoLimit">0 / 12</span>
+                            <div class="section-actions">
+                                <span class="task-count-badge" id="todoLimit">当前任务 0 / 12</span>
+                                <button class="button ghost archive-toggle" id="archiveToggle" type="button" aria-expanded="false" aria-controls="archiveTimeline">归档任务</button>
+                            </div>
                         </div>
                         <div id="todos" class="todo-grid"></div>
+                        <div id="archiveTimeline" class="archive-timeline" hidden></div>
                     </section>
 
                     <section class="panel" id="sec-projects">
@@ -202,6 +185,6 @@
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
     </div>
-    <script src="script.js?v=20260829-2"></script>
+    <script src="script.js?v=20260830-archive"></script>
 </body>
 </html>

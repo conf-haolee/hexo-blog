@@ -336,6 +336,34 @@ body {
     color: var(--text-primary);
 }
 
+.section-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.task-count-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: rgba(122, 182, 255, 0.08);
+    color: var(--accent-blue);
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--mono-family);
+    white-space: nowrap;
+}
+
+.archive-toggle {
+    min-height: 34px;
+    padding: 0 14px;
+}
+
 /* --- Content grid (2 columns: main + aside) --- */
 .content-grid {
     display: grid;
@@ -738,6 +766,82 @@ body {
     color: var(--text-muted);
     font-family: var(--mono-family);
     margin-right: auto;
+}
+
+.archive-timeline {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.archive-timeline[hidden] {
+    display: none;
+}
+
+.archive-timeline-list {
+    position: relative;
+    display: grid;
+    gap: 12px;
+    padding-left: 14px;
+}
+
+.archive-timeline-list::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 4px;
+    width: 1px;
+    background: linear-gradient(180deg, var(--accent-blue), rgba(122, 182, 255, 0.08));
+}
+
+.archive-timeline-item {
+    position: relative;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.archive-timeline-item::before {
+    content: "";
+    position: absolute;
+    top: 18px;
+    left: -14px;
+    width: 9px;
+    height: 9px;
+    border: 2px solid var(--bg-secondary);
+    border-radius: 50%;
+    background: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(122, 182, 255, 0.12);
+}
+
+.archive-timeline-time {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--accent-blue);
+    font-size: 11px;
+    font-family: var(--mono-family);
+    letter-spacing: 0.03em;
+}
+
+.archive-timeline-item h3 {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.archive-timeline-meta,
+.archive-timeline-summary {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.archive-timeline-summary {
+    margin-top: 6px;
+    color: var(--text-secondary);
 }
 
 /* --- Notice / toast --- */

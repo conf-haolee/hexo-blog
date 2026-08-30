@@ -10,6 +10,7 @@
         this.todoScreenshotFile = null;
         this.editingTodo = null;
         this.todoClickTimer = null;
+        this.archiveExpanded = false;
         this.bind();
         this.load();
     }
@@ -38,6 +39,7 @@
         document.getElementById('refreshButton').addEventListener('click', () => this.load());
         document.getElementById('logoutButton').addEventListener('click', () => this.logout());
         document.getElementById('searchInput').addEventListener('input', () => this.renderProjects());
+        document.getElementById('archiveToggle').addEventListener('click', () => this.toggleArchiveTimeline());
         document.getElementById('todoForm').addEventListener('submit', event => {
             event.preventDefault();
             this.createTodo();
@@ -92,7 +94,10 @@
             this.contributions = results[4] || {};
             this.renderAll();
             this.setStatus('在线', true);
-            document.getElementById('lastUpdated').textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
+            var lastUpdated = document.getElementById('lastUpdated');
+            if (lastUpdated) {
+                lastUpdated.textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
+            }
         } catch (error) {
             this.setStatus('服务不可用', false);
             this.showNotice(error.message, true);
@@ -104,25 +109,22 @@
         this.renderProjectSelect();
         this.renderProjects();
         this.renderTodos();
+        this.renderArchiveTimeline();
         this.renderHeatmap();
     }
 
     renderStats() {
-        var projectCount = this.projects.length;
         var todoCount = Array.isArray(this.todos.todo) ? this.todos.todo.length : 0;
-        var commitCount = this.projects.reduce((total, project) => {
-            return total + (project.gitInfo && project.gitInfo.commits ? project.gitInfo.commits.length : 0);
-        }, 0);
-        document.getElementById('projectCount').textContent = projectCount;
-        document.getElementById('todoCount').textContent = todoCount;
-        document.getElementById('commitCount').textContent = commitCount;
-        document.getElementById('todoLimit').textContent = todoCount + ' / ' + (this.todos.limits.maxTodoItems || 12);
-        document.getElementById('todoProgress').style.width = Math.min(100, todoCount * 100 / (this.todos.limits.maxTodoItems || 12)) + '%';
+        var maxTodoItems = this.todos.limits.maxTodoItems || 12;
+        document.getElementById('todoLimit').textContent = '当前任务 ' + todoCount + ' / ' + maxTodoItems;
     }
 
     setStatus(text, online) {
-        document.getElementById('serverStatus').textContent = text;
-        document.getElementById('serverStatusDot').className = 'status-dot ' + (online ? 'online' : 'offline');
+        var serverStatus = document.getElementById('serverStatus');
+        var serverStatusDot = document.getElementById('serverStatusDot');
+        if (!serverStatus || !serverStatusDot) return;
+        serverStatus.textContent = text;
+        serverStatusDot.className = 'status-dot ' + (online ? 'online' : 'offline');
     }
 
     renderProjectSelect() {
@@ -274,6 +276,46 @@
             failed: '归档失败',
             complete: '已完成'
         }[status] || '';
+    }
+
+    toggleArchiveTimeline() {
+        this.archiveExpanded = !this.archiveExpanded;
+        this.renderArchiveTimeline();
+    }
+
+    renderArchiveTimeline() {
+        var container = document.getElementById('archiveTimeline');
+        var button = document.getElementById('archiveToggle');
+        if (!container || !button) return;
+        var items = (this.todos.done || []).slice().sort((left, right) => {
+            return String(right.completedAt || '').localeCompare(String(left.completedAt || ''));
+        });
+        button.textContent = this.archiveExpanded ? '收起归档' : '归档任务 ' + items.length;
+        button.setAttribute('aria-expanded', this.archiveExpanded ? 'true' : 'false');
+        container.hidden = !this.archiveExpanded;
+        if (!this.archiveExpanded) return;
+        if (!items.length) {
+            container.innerHTML = '<p class="empty">暂无归档任务。</p>';
+            return;
+        }
+        container.innerHTML = '<div class="archive-timeline-list">' + items.map(item => {
+            var completedAt = item.completedAt ? item.completedAt.replace('T', ' ').slice(0, 16) : '完成时间未记录';
+            var projectName = item.projectName === 'Temporary work' ? '临时工作' : (item.projectName || '临时工作');
+            var projectMeta = projectName + (item.projectNumber ? ' · ' + item.projectNumber : '');
+            return '<article class="archive-timeline-item">' +
+                '<time class="archive-timeline-time">' + this.escape(completedAt) + '</time>' +
+                '<h3>' + this.escape(item.name || '未命名任务') + '</h3>' +
+                '<p class="archive-timeline-meta">' + this.escape(projectMeta) + '</p>' +
+                '<p class="archive-timeline-summary">' + this.escape(this.archiveSummary(item)) + '</p>' +
+                '</article>';
+        }).join('') + '</div>';
+    }
+
+    archiveSummary(item) {
+        var source = item.resultDescription || item.notes || item.name || '';
+        source = source.replace(/\s+/g, ' ').trim();
+        if (!source) return '任务已完成并归档。';
+        return source.length > 72 ? source.slice(0, 72) + '…' : source;
     }
 
     openTodoEditor(item) {

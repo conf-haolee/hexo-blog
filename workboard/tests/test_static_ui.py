@@ -59,13 +59,24 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("gitInfo.commits.slice(0, 3)", self.script)
         self.assertIn("project-commit-list", self.script)
 
-    def test_quick_find_precedes_compact_status_cards(self):
+    def test_top_status_cards_are_removed_and_task_count_moves_into_task_panel(self):
         ids = self.parser.ids
-        self.assertLess(ids.index("searchInput"), ids.index("projectCount"))
-        self.assertLess(ids.index("searchInput"), ids.index("todoCount"))
-        self.assertLess(ids.index("searchInput"), ids.index("commitCount"))
-        self.assertIn("compact-status", self.parser.by_id["statusCards"]["attrs"].get("class", ""))
-        self.assertIn(".compact-status .hero-card", self.css)
+        self.assertNotIn("statusCards", self.parser.by_id)
+        self.assertNotIn("projectCount", self.parser.by_id)
+        self.assertNotIn("todoCount", self.parser.by_id)
+        self.assertNotIn("commitCount", self.parser.by_id)
+        self.assertLess(ids.index("searchInput"), ids.index("sec-todos"))
+        self.assertEqual(self.parser.by_id["todoLimit"]["tag"], "span")
+        self.assertIn("task-count-badge", self.parser.by_id["todoLimit"]["attrs"].get("class", ""))
+
+    def test_task_panel_contains_archive_toggle_and_timeline(self):
+        self.assertEqual(self.parser.by_id["archiveToggle"]["tag"], "button")
+        self.assertEqual(self.parser.by_id["archiveTimeline"]["tag"], "div")
+        self.assertIn("archive-timeline", self.parser.by_id["archiveTimeline"]["attrs"].get("class", ""))
+        self.assertIn("renderArchiveTimeline", self.script)
+        self.assertIn("toggleArchiveTimeline", self.script)
+        self.assertIn("this.todos.done", self.script)
+        self.assertIn("resultDescription || item.notes || item.name", self.script)
 
     def test_dashboard_uses_panel_names_and_overflow_safe_due_row(self):
         self.assertIn("<h2>任务面板</h2>", self.html)
