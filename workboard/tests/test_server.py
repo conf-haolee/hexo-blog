@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 from pathlib import Path
 
@@ -781,6 +782,107 @@ class WorkboardApiTests(unittest.TestCase):
         self.assertIn("- Contact: 杨珂", markdown)
         self.assertIn("先复现现场问题，再整理日志。", markdown)
         document.close()
+
+    def test_import_local_task_folders_reads_only_date_folders_and_is_idempotent(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        root = Path(self.temp_dir.name) / "worklogs"
+        task_dir = root / "20260824" / "1.去石岩欣旺达处理SVB工程CT问题，排查通讯延时问题"
+        ignored_dir = root / "测试透明管" / "不应导入"
+        task_dir.mkdir(parents=True)
+        ignored_dir.mkdir(parents=True)
+        (task_dir / "WorkLog.txt").write_text(
+            "现场复现通讯延时，确认等待机制需要调整。\n补充抓取日志和复盘结论。",
+            encoding="utf-8",
+        )
+        (ignored_dir / "WorkLog.txt").write_text("非日期目录不导入", encoding="utf-8")
+
+        response = self.client.post(
+            "/api/import/local-tasks",
+            json={"rootPath": str(root)},
+            headers=access_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(result["skipped"], 0)
+        self.assertEqual(result["ignoredDateFolders"], ["测试透明管"])
+        imported = result["items"][0]
+        self.assertEqual(imported["name"], "1.去石岩欣旺达处理SVB工程CT问题，排查通讯延时问题")
+        self.assertEqual(imported["taskDate"], "2026-08-24")
+        self.assertEqual(imported["status"], "done")
+        self.assertEqual(imported["completedAt"], "2026-08-24T23:59:00")
+        self.assertEqual(imported["localPath"], str(task_dir.resolve(strict=False)))
+        self.assertIn("现场复现通讯延时", imported["notes"])
+        self.assertIn("现场复现通讯延时", imported["resultDescription"])
+
+        duplicate = self.client.post(
+            "/api/import/local-tasks",
+            json={"rootPath": str(root)},
+            headers=access_headers,
+        )
+        self.assertEqual(duplicate.status_code, 200)
+        duplicate_result = duplicate.get_json()
+        self.assertEqual(duplicate_result["imported"], 0)
+        self.assertEqual(duplicate_result["skipped"], 1)
+
+        todos = self.client.get("/api/todos", headers=access_headers).get_json()
+        self.assertEqual(len(todos["todo"]), 0)
+        self.assertEqual(len(todos["done"]), 1)
+
+    def test_ai_settings_are_saved_without_exposing_full_key(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        response = self.client.post(
+            "/api/settings/ai",
+            json={
+                "apiKey": "sk-test-123456789",
+                "baseUrl": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+            },
+            headers=access_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        settings = response.get_json()["settings"]
+        self.assertTrue(settings["hasApiKey"])
+        self.assertEqual(settings["keyPreview"], "sk-...789")
+        self.assertNotIn("apiKey", settings)
+
+        loaded = self.client.get("/api/settings/ai", headers=access_headers).get_json()
+        self.assertEqual(loaded["keyPreview"], "sk-...789")
+        self.assertNotIn("apiKey", loaded)
+
+    def test_summary_context_includes_pending_and_completed_task_details(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        self.client.post(
+            "/api/todos",
+            json={
+                "name": "待处理视觉问题",
+                "notes": "需要复测曝光参数。",
+                "taskDate": datetime.now().strftime("%Y-%m-%d"),
+            },
+            headers=access_headers,
+        )
+        root = Path(self.temp_dir.name) / "worklogs"
+        imported_task = root / datetime.now().strftime("%Y%m%d") / "已处理通讯延时"
+        imported_task.mkdir(parents=True)
+        (imported_task / "WorkLog.txt").write_text(
+            "调整等待机制，延时问题关闭。", encoding="utf-8"
+        )
+        self.client.post(
+            "/api/import/local-tasks",
+            json={"rootPath": str(root)},
+            headers=access_headers,
+        )
+
+        context = self.client.get(
+            "/api/summary/context?period=today", headers=access_headers
+        ).get_json()
+
+        self.assertEqual(context["tasks"]["pending"][0]["name"], "待处理视觉问题")
+        self.assertIn("复测曝光参数", context["tasks"]["pending"][0]["notes"])
+        self.assertEqual(context["tasks"]["completed"][0]["name"], "已处理通讯延时")
+        self.assertIn("延时问题关闭", context["tasks"]["completed"][0]["resultDescription"])
 
     def test_cloudflare_mode_requires_identity_header(self):
         server.AUTH_MODE = "cloudflare"

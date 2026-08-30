@@ -410,6 +410,13 @@ def validate_date(value):
         raise ValueError("Created date must be in YYYY-MM-DD format") from exc
 
 
+def date_folder_to_iso(value):
+    try:
+        return datetime.strptime(str(value or ""), "%Y%m%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("Date folder must use YYYYMMDD format") from exc
+
+
 def project_values(project):
     return (
         project["name"],
@@ -663,6 +670,54 @@ def sanitize_task_name(name):
     value = re.sub(r'[<>:"/\\|?*]+', " ", str(name or "").strip())
     value = re.sub(r"\s+", " ", value).strip().rstrip(".")
     return (value or "Untitled Task")[:80]
+
+
+def read_text_with_fallback(path):
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "cp936"):
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def find_worklog_file(task_dir):
+    try:
+        children = list(task_dir.iterdir())
+    except OSError:
+        return None
+    return next(
+        (
+            child
+            for child in children
+            if child.is_file() and child.name.lower() == "worklog.txt"
+        ),
+        None,
+    )
+
+
+def first_summary_line(text, fallback):
+    for line in str(text or "").splitlines():
+        value = line.strip()
+        if value:
+            return value[:8000]
+    return str(fallback or "本地历史任务已导入。")[:8000]
+
+
+def local_import_duplicate_exists(task_date, name, local_path):
+    return (
+        get_db()
+        .execute(
+            """
+            SELECT 1 FROM todos
+            WHERE task_date = ? AND name = ? AND local_path = ? AND status = 'done'
+            LIMIT 1
+            """,
+            (task_date, name, local_path),
+        )
+        .fetchone()
+        is not None
+    )
 
 
 def safe_folder_name(base_dir, preferred_name, current_name=None):
@@ -1020,6 +1075,19 @@ def resolve_period(period):
     return start, now, title
 
 
+def summary_task_item(item):
+    return {
+        "name": item.get("name", ""),
+        "projectName": item.get("projectName", ""),
+        "projectNumber": item.get("projectNumber", ""),
+        "taskDate": item.get("taskDate", ""),
+        "progress": item.get("progress", 0),
+        "notes": item.get("notes", ""),
+        "resultDescription": item.get("resultDescription", ""),
+        "completedAt": item.get("completedAt"),
+    }
+
+
 def build_summary_context(period):
     start, end, title = resolve_period(period)
     todos = load_todos()
@@ -1046,6 +1114,10 @@ def build_summary_context(period):
             f"Completed tasks in period: {len(done)}",
             f"Tracked projects: {len(projects)}",
         ],
+        "tasks": {
+            "pending": [summary_task_item(item) for item in pending],
+            "completed": [summary_task_item(item) for item in done],
+        },
     }
 
 
@@ -1308,6 +1380,82 @@ def create_todo():
     if screenshot_name:
         screenshot.save(todo_folder(item) / screenshot_name)
     return jsonify({"success": True, "item": serialize_todo(item)})
+
+
+@app.route("/api/import/local-tasks", methods=["POST"])
+def import_local_tasks():
+    payload = request.get_json(silent=True) or {}
+    root_path = Path(str(payload.get("rootPath") or "").strip()).expanduser()
+    if not str(root_path).strip():
+        return jsonify({"error": "Root path is required"}), 400
+    root_path = root_path.resolve(strict=False)
+    if not root_path.is_dir():
+        return jsonify({"error": "Root path does not exist"}), 400
+
+    imported = []
+    skipped = 0
+    ignored_date_folders = []
+    db = get_db()
+    for date_dir in sorted((child for child in root_path.iterdir() if child.is_dir()), key=lambda item: item.name):
+        if not re.fullmatch(r"\d{8}", date_dir.name):
+            ignored_date_folders.append(date_dir.name)
+            continue
+        try:
+            task_date = date_folder_to_iso(date_dir.name)
+        except ValueError:
+            ignored_date_folders.append(date_dir.name)
+            continue
+        completed_at = f"{task_date}T23:59:00"
+        for task_dir in sorted((child for child in date_dir.iterdir() if child.is_dir()), key=lambda item: item.name):
+            name = task_dir.name.strip()
+            if not name:
+                continue
+            local_path = str(task_dir.resolve(strict=False))
+            if local_import_duplicate_exists(task_date, name, local_path):
+                skipped += 1
+                continue
+            worklog = find_worklog_file(task_dir)
+            notes = read_text_with_fallback(worklog).strip()[:4000] if worklog else ""
+            result_description = first_summary_line(notes, name)
+            folder_name = safe_folder_name(DONE_DIR, sanitize_task_name(name))
+            cursor = db.execute(
+                """
+                INSERT INTO todos
+                (order_no, name, project_id, project_name, created_at, completed_at, due_at,
+                 progress, status, folder_name, project_number, contact, notes, task_date,
+                 screenshot_name, screenshot_mime, result_description, local_path, archive_status,
+                 archive_error, archive_lease_until, archive_lease_token, archive_agent_id,
+                 archive_completed_at)
+                VALUES ((SELECT COALESCE(MAX(order_no), 0) + 1 FROM todos), ?, NULL,
+                        'Local imported worklog', ?, ?, NULL, 100, 'done', ?, '', '本地导入',
+                        ?, ?, '', '', ?, ?, 'complete', '', NULL, '', '', ?)
+                """,
+                (
+                    name[:200],
+                    f"{task_date}T09:00:00",
+                    completed_at,
+                    folder_name,
+                    notes,
+                    task_date,
+                    result_description,
+                    local_path[:500],
+                    completed_at,
+                ),
+            )
+            db.commit()
+            item = find_todo(cursor.lastrowid)
+            sync_todo_markdown(item)
+            imported.append(serialize_todo(item))
+
+    return jsonify(
+        {
+            "success": True,
+            "imported": len(imported),
+            "skipped": skipped,
+            "ignoredDateFolders": ignored_date_folders,
+            "items": imported,
+        }
+    )
 
 
 @app.route("/api/todos/<int:todo_id>", methods=["PATCH"])

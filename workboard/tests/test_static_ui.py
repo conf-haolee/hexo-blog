@@ -78,6 +78,25 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("this.todos.done", self.script)
         self.assertIn("resultDescription || item.notes || item.name", self.script)
 
+    def test_task_panel_contains_local_import_controls(self):
+        self.assertEqual(self.parser.by_id["localImportForm"]["tag"], "form")
+        self.assertEqual(self.parser.by_id["localImportRoot"]["tag"], "input")
+        self.assertEqual(self.parser.by_id["localImportResult"]["tag"], "p")
+        self.assertIn("D:\\01工作日志", self.html)
+        self.assertIn("importLocalTasks", self.script)
+        self.assertIn("/import/local-tasks", self.script)
+
+    def test_dashboard_contains_ai_settings_controls(self):
+        self.assertEqual(self.parser.by_id["aiSettingsButton"]["tag"], "button")
+        self.assertEqual(self.parser.by_id["aiSettingsDialog"]["tag"], "dialog")
+        self.assertEqual(self.parser.by_id["aiSettingsForm"]["tag"], "form")
+        self.assertEqual(self.parser.by_id["aiApiKey"]["tag"], "input")
+        self.assertEqual(self.parser.by_id["aiBaseUrl"]["tag"], "input")
+        self.assertEqual(self.parser.by_id["aiModel"]["tag"], "input")
+        self.assertIn("loadAiSettings", self.script)
+        self.assertIn("saveAiSettings", self.script)
+        self.assertIn("/settings/ai", self.script)
+
     def test_dashboard_uses_panel_names_and_overflow_safe_due_row(self):
         self.assertIn("<h2>任务面板</h2>", self.html)
         self.assertIn("<h2>项目面板</h2>", self.html)

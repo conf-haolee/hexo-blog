@@ -11,6 +11,7 @@
         this.editingTodo = null;
         this.todoClickTimer = null;
         this.archiveExpanded = false;
+        this.aiSettings = null;
         this.bind();
         this.load();
     }
@@ -40,6 +41,21 @@
         document.getElementById('logoutButton').addEventListener('click', () => this.logout());
         document.getElementById('searchInput').addEventListener('input', () => this.renderProjects());
         document.getElementById('archiveToggle').addEventListener('click', () => this.toggleArchiveTimeline());
+        document.getElementById('aiSettingsButton').addEventListener('click', () => this.openAiSettings());
+        document.getElementById('closeAiSettings').addEventListener('click', () => {
+            document.getElementById('aiSettingsDialog').close();
+        });
+        document.getElementById('cancelAiSettings').addEventListener('click', () => {
+            document.getElementById('aiSettingsDialog').close();
+        });
+        document.getElementById('aiSettingsForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.saveAiSettings();
+        });
+        document.getElementById('localImportForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.importLocalTasks();
+        });
         document.getElementById('todoForm').addEventListener('submit', event => {
             event.preventDefault();
             this.createTodo();
@@ -94,6 +110,7 @@
             this.contributions = results[4] || {};
             this.renderAll();
             this.setStatus('在线', true);
+            this.loadAiSettings();
             var lastUpdated = document.getElementById('lastUpdated');
             if (lastUpdated) {
                 lastUpdated.textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
@@ -448,6 +465,26 @@
         }
     }
 
+    async importLocalTasks() {
+        var rootInput = document.getElementById('localImportRoot');
+        var result = document.getElementById('localImportResult');
+        var rootPath = rootInput.value.trim();
+        result.textContent = '正在导入...';
+        try {
+            var response = await this.request('/import/local-tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rootPath: rootPath })
+            });
+            result.textContent = '已导入 ' + response.imported + ' 个，跳过重复 ' + response.skipped + ' 个。';
+            this.showNotice('历史任务导入完成');
+            await this.load();
+        } catch (error) {
+            result.textContent = error.message;
+            this.showNotice(error.message, true);
+        }
+    }
+
     capturePastedScreenshot(event) {
         var items = event.clipboardData && event.clipboardData.items;
         if (!items) return;
@@ -538,6 +575,60 @@
             content.textContent = result.summary;
         } catch (error) {
             content.textContent = error.message;
+        }
+    }
+
+    async loadAiSettings() {
+        try {
+            this.aiSettings = await this.request('/settings/ai');
+            this.renderAiSettings();
+        } catch (error) {
+            this.aiSettings = null;
+        }
+    }
+
+    renderAiSettings() {
+        var settings = this.aiSettings || {};
+        var status = document.getElementById('aiSettingsStatus');
+        var apiKey = document.getElementById('aiApiKey');
+        var baseUrl = document.getElementById('aiBaseUrl');
+        var model = document.getElementById('aiModel');
+        if (!status || !apiKey || !baseUrl || !model) return;
+        apiKey.value = '';
+        apiKey.placeholder = settings.hasApiKey
+            ? '已配置 ' + settings.keyPreview + '，留空则不修改'
+            : 'DeepSeek API Key';
+        baseUrl.value = settings.baseUrl || 'https://api.deepseek.com/v1';
+        model.value = settings.model || 'deepseek-chat';
+        status.textContent = settings.hasApiKey
+            ? 'AI 已配置：' + settings.provider + ' / ' + settings.model + ' / ' + settings.keyPreview
+            : 'AI 未配置。今日总结、本周总结需要 DeepSeek API Key。';
+    }
+
+    async openAiSettings() {
+        await this.loadAiSettings();
+        document.getElementById('aiSettingsDialog').showModal();
+    }
+
+    async saveAiSettings() {
+        var payload = {
+            apiKey: document.getElementById('aiApiKey').value.trim(),
+            baseUrl: document.getElementById('aiBaseUrl').value.trim(),
+            model: document.getElementById('aiModel').value.trim()
+        };
+        try {
+            var result = await this.request('/settings/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            this.aiSettings = result.settings;
+            this.renderAiSettings();
+            document.getElementById('aiSettingsDialog').close();
+            this.showNotice('AI 设置已保存');
+        } catch (error) {
+            document.getElementById('aiSettingsStatus').textContent = error.message;
+            this.showNotice(error.message, true);
         }
     }
 
