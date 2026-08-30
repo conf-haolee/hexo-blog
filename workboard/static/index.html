@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="workboard-base-path" content="">
     <title>私人工作面板</title>
-    <link rel="stylesheet" href="style.css?v=20260830-import-ai">
+    <link rel="stylesheet" href="style.css?v=20260830-settings">
 </head>
 <body>
     <div class="shell">
@@ -17,7 +17,7 @@
             </div>
             <div class="top-actions">
                 <a class="button ghost" href="https://www.cvhao.top/">返回公开博客</a>
-                <button class="button ghost" id="aiSettingsButton" type="button">AI 设置</button>
+                <button class="icon-button settings-button" id="settingsButton" type="button" aria-label="设置" title="设置">⚙</button>
                 <button class="button primary" id="refreshButton" type="button">刷新数据</button>
                 <button class="button ghost" id="logoutButton" type="button">退出登录</button>
             </div>
@@ -52,14 +52,6 @@
                             </div>
                         </div>
                         <div id="todos" class="todo-grid"></div>
-                        <form id="localImportForm" class="inline-import-form">
-                            <div>
-                                <label class="field-label">导入本地历史任务文件夹</label>
-                                <input id="localImportRoot" type="text" value="D:\01工作日志" placeholder="例如 D:\01工作日志">
-                            </div>
-                            <button class="button ghost" type="submit">导入历史任务</button>
-                            <p class="muted small" id="localImportResult"></p>
-                        </form>
                         <div id="archiveTimeline" class="archive-timeline" hidden></div>
                     </section>
 
@@ -193,23 +185,51 @@
             <p class="muted" id="summaryMeta"></p>
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
-        <dialog id="aiSettingsDialog">
+        <dialog id="settingsDialog" class="settings-dialog">
             <div class="dialog-head">
-                <h2>AI 设置</h2>
-                <button class="icon-button" id="closeAiSettings" type="button" aria-label="关闭">×</button>
-            </div>
-            <p class="muted small" id="aiSettingsStatus">用于今日总结、本周总结和历史任务内容整理。</p>
-            <form id="aiSettingsForm" class="stack-form">
-                <input id="aiApiKey" type="password" autocomplete="off" placeholder="DeepSeek API Key">
-                <input id="aiBaseUrl" type="url" placeholder="https://api.deepseek.com/v1">
-                <input id="aiModel" type="text" placeholder="deepseek-chat">
-                <div class="dialog-actions">
-                    <button class="button ghost" id="cancelAiSettings" type="button">取消</button>
-                    <button class="button primary" type="submit">保存 AI 设置</button>
+                <div>
+                    <p class="eyebrow">SETTINGS</p>
+                    <h2>工作面板设置</h2>
                 </div>
-            </form>
+                <button class="icon-button" id="closeSettings" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="settings-sections">
+                <section class="settings-section">
+                    <div class="settings-section-head">
+                        <h3>AI 设置</h3>
+                        <p class="muted small">用于今日总结、本周总结和历史任务内容整理。</p>
+                    </div>
+                    <p class="muted small" id="aiSettingsStatus"></p>
+                    <form id="aiSettingsForm" class="stack-form">
+                        <input id="aiApiKey" type="password" autocomplete="off" placeholder="DeepSeek API Key">
+                        <input id="aiBaseUrl" type="url" placeholder="https://api.deepseek.com/v1">
+                        <input id="aiModel" type="text" placeholder="deepseek-chat">
+                        <button class="button primary" type="submit">保存 AI 设置</button>
+                    </form>
+                </section>
+
+                <section class="settings-section">
+                    <div class="settings-section-head">
+                        <h3>本地任务导入</h3>
+                        <p class="muted small">只读取日期命名文件夹，导入后显示在归档任务时间线。</p>
+                    </div>
+                    <form id="localImportForm" class="settings-import-form">
+                        <input id="localImportRoot" type="text" value="D:\01工作日志" placeholder="例如 D:\01工作日志">
+                        <button class="button ghost" type="submit">导入历史任务</button>
+                        <p class="muted small" id="localImportResult"></p>
+                    </form>
+                </section>
+
+                <section class="settings-section muted-settings-section">
+                    <h3>后续设置</h3>
+                    <p class="muted small">NAS 推送路径、同步策略、归档策略后续统一放在这里。</p>
+                </section>
+            </div>
+            <div class="dialog-actions">
+                <button class="button ghost" id="cancelSettings" type="button">关闭</button>
+            </div>
         </dialog>
     </div>
-    <script src="script.js?v=20260830-import-ai"></script>
+    <script src="script.js?v=20260830-settings"></script>
 </body>
 </html>

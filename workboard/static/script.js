@@ -41,12 +41,12 @@
         document.getElementById('logoutButton').addEventListener('click', () => this.logout());
         document.getElementById('searchInput').addEventListener('input', () => this.renderProjects());
         document.getElementById('archiveToggle').addEventListener('click', () => this.toggleArchiveTimeline());
-        document.getElementById('aiSettingsButton').addEventListener('click', () => this.openAiSettings());
-        document.getElementById('closeAiSettings').addEventListener('click', () => {
-            document.getElementById('aiSettingsDialog').close();
+        document.getElementById('settingsButton').addEventListener('click', () => this.openSettings());
+        document.getElementById('closeSettings').addEventListener('click', () => {
+            document.getElementById('settingsDialog').close();
         });
-        document.getElementById('cancelAiSettings').addEventListener('click', () => {
-            document.getElementById('aiSettingsDialog').close();
+        document.getElementById('cancelSettings').addEventListener('click', () => {
+            document.getElementById('settingsDialog').close();
         });
         document.getElementById('aiSettingsForm').addEventListener('submit', event => {
             event.preventDefault();
@@ -605,9 +605,9 @@
             : 'AI 未配置。今日总结、本周总结需要 DeepSeek API Key。';
     }
 
-    async openAiSettings() {
+    async openSettings() {
         await this.loadAiSettings();
-        document.getElementById('aiSettingsDialog').showModal();
+        document.getElementById('settingsDialog').showModal();
     }
 
     async saveAiSettings() {
@@ -624,7 +624,6 @@
             });
             this.aiSettings = result.settings;
             this.renderAiSettings();
-            document.getElementById('aiSettingsDialog').close();
             this.showNotice('AI 设置已保存');
         } catch (error) {
             document.getElementById('aiSettingsStatus').textContent = error.message;
