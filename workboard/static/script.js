@@ -9,6 +9,7 @@
         this.noticeTimer = null;
         this.todoScreenshotFile = null;
         this.editingTodo = null;
+        this.editingProject = null;
         this.todoClickTimer = null;
         this.archiveExpanded = false;
         this.aiSettings = null;
@@ -79,6 +80,12 @@
         document.getElementById('todoArchiveRetry').addEventListener('click', event => {
             event.stopPropagation();
             if (this.editingTodo) this.retryArchive(this.editingTodo.id);
+        });
+        document.getElementById('closeProjectEdit').addEventListener('click', () => this.closeProjectEditor());
+        document.getElementById('cancelProjectEdit').addEventListener('click', () => this.closeProjectEditor());
+        document.getElementById('projectEditForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.saveProjectEdit();
         });
         var today = new Date().toISOString().slice(0, 10);
         document.getElementById('projectCreated').value = today;
@@ -286,7 +293,8 @@
         card.title = project.localPath ? '双击打开本地路径：' + project.localPath : '双击提示配置本地路径';
         card.innerHTML =
             '<div class="card-top"><span class="project-id">#' + project.id + '</span>' +
-            '<span class="path-label">' + this.highlightSearch(project.pathLabel || '路径未配置') + '</span></div>' +
+            '<div class="project-card-actions"><span class="path-label">' + this.highlightSearch(project.pathLabel || '路径未配置') + '</span>' +
+            '<button class="link-button project-edit-button" type="button">编辑</button></div></div>' +
             '<h3>' + this.highlightSearch(project.name) + '</h3>' +
             '<p class="muted description">' + this.highlightSearch(project.description || '暂无描述') + '</p>' +
             '<div class="tag-row">' + tags + categories + '</div>' +
@@ -298,6 +306,10 @@
         card.addEventListener('dblclick', event => {
             event.stopPropagation();
             this.openProjectFolder(project);
+        });
+        card.querySelector('.project-edit-button').addEventListener('click', event => {
+            event.stopPropagation();
+            this.openProjectEditor(project);
         });
         return card;
     }
@@ -313,6 +325,56 @@
                 '<span class="commit-meta">' + this.highlightSearch(meta) + '</span>' +
                 '</div>';
         }).join('') + '</div>';
+    }
+
+    async openProjectEditor(project) {
+        try {
+            var details = await this.request('/projects/' + project.id);
+            this.editingProject = details;
+            document.getElementById('projectEditName').value = details.name || '';
+            document.getElementById('projectEditNasPath').value = details.nasPath || '';
+            document.getElementById('projectEditLocalPath').value = details.localPath || '';
+            document.getElementById('projectEditGitRepo').value = details.gitRepo || '';
+            document.getElementById('projectEditCreated').value = details.created || new Date().toISOString().slice(0, 10);
+            document.getElementById('projectEditTags').value = (details.tags || []).join(', ');
+            document.getElementById('projectEditCategories').value = (details.categories || []).join(', ');
+            document.getElementById('projectEditDescription').value = details.description || '';
+            document.getElementById('projectEditDialog').showModal();
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
+    }
+
+    closeProjectEditor() {
+        var dialog = document.getElementById('projectEditDialog');
+        if (dialog.open) dialog.close();
+        this.editingProject = null;
+    }
+
+    async saveProjectEdit() {
+        if (!this.editingProject) return;
+        var payload = {
+            name: document.getElementById('projectEditName').value.trim(),
+            nasPath: document.getElementById('projectEditNasPath').value.trim(),
+            localPath: document.getElementById('projectEditLocalPath').value.trim(),
+            gitRepo: document.getElementById('projectEditGitRepo').value.trim(),
+            created: document.getElementById('projectEditCreated').value,
+            tags: document.getElementById('projectEditTags').value,
+            categories: document.getElementById('projectEditCategories').value,
+            description: document.getElementById('projectEditDescription').value.trim()
+        };
+        try {
+            await this.request('/projects/' + this.editingProject.id, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            this.showNotice('项目信息已更新');
+            this.closeProjectEditor();
+            await this.load();
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
     }
 
     renderTodos() {

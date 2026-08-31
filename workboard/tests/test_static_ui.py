@@ -59,6 +59,29 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("gitInfo.commits.slice(0, 3)", self.script)
         self.assertIn("project-commit-list", self.script)
 
+    def test_project_cards_have_edit_button_and_project_edit_dialog(self):
+        self.assertEqual(self.parser.by_id["projectEditDialog"]["tag"], "dialog")
+        self.assertEqual(self.parser.by_id["projectEditForm"]["tag"], "form")
+        for field in (
+            "projectEditName",
+            "projectEditNasPath",
+            "projectEditLocalPath",
+            "projectEditGitRepo",
+            "projectEditCreated",
+            "projectEditTags",
+            "projectEditCategories",
+            "projectEditDescription",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, self.parser.by_id)
+        for handler in ("openProjectEditor", "closeProjectEditor", "saveProjectEdit"):
+            with self.subTest(handler=handler):
+                self.assertRegex(self.script, r"\b" + re.escape(handler) + r"\s*\(")
+        self.assertIn("project-edit-button", self.script)
+        self.assertIn("this.openProjectEditor(project)", self.script)
+        self.assertIn("/projects/' + this.editingProject.id", self.script)
+        self.assertNotIn("card.addEventListener('click', () => this.openProjectEditor", self.script)
+
     def test_top_status_cards_are_removed_and_task_count_moves_into_task_panel(self):
         ids = self.parser.ids
         self.assertNotIn("statusCards", self.parser.by_id)

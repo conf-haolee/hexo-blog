@@ -743,6 +743,99 @@ class WorkboardApiTests(unittest.TestCase):
         self.assertEqual(response.json["path"], str(expected_path))
         opener.assert_called_once_with(expected_path)
 
+    def test_project_details_can_be_loaded_and_updated_without_exposing_paths_in_list(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        first_local = Path(self.temp_dir.name) / "first-local"
+        second_local = Path(self.temp_dir.name) / "second-local"
+        first_local.mkdir()
+        second_local.mkdir()
+        create_response = self.client.post(
+            "/api/projects",
+            json={
+                "name": "Editable project",
+                "localPath": str(first_local),
+                "nasPath": r"\\nas\projects\editable",
+                "gitRepo": str(first_local / "repo"),
+                "created": "2026-08-20",
+                "tags": "old, vision",
+                "categories": "source",
+                "description": "Original description",
+            },
+            headers=access_headers,
+        )
+        self.assertEqual(create_response.status_code, 200)
+        project_id = create_response.get_json()["item"]["id"]
+        create_response.close()
+
+        details_response = self.client.get(
+            "/api/projects/%s" % project_id, headers=access_headers
+        )
+        self.assertEqual(details_response.status_code, 200)
+        details = details_response.get_json()
+        details_response.close()
+        self.assertEqual(details["nasPath"], r"\\nas\projects\editable")
+        self.assertEqual(details["gitRepo"], str(first_local / "repo"))
+
+        update_response = self.client.patch(
+            "/api/projects/%s" % project_id,
+            json={
+                "name": "Edited project",
+                "localPath": str(second_local),
+                "nasPath": r"\\nas\projects\edited",
+                "gitRepo": str(second_local / "repo"),
+                "created": "2026-08-29",
+                "tags": "edited, Git",
+                "categories": "archive, local",
+                "description": "Updated description",
+            },
+            headers=access_headers,
+        )
+        self.assertEqual(update_response.status_code, 200)
+        updated = update_response.get_json()["item"]
+        update_response.close()
+        self.assertEqual(updated["name"], "Edited project")
+        self.assertEqual(updated["localPath"], str(second_local))
+        self.assertEqual(updated["nasPath"], r"\\nas\projects\edited")
+        self.assertEqual(updated["gitRepo"], str(second_local / "repo"))
+        self.assertEqual(updated["tags"], ["edited", "Git"])
+        self.assertEqual(updated["categories"], ["archive", "local"])
+        self.assertEqual(updated["description"], "Updated description")
+
+        list_response = self.client.get("/api/projects", headers=access_headers)
+        self.assertEqual(list_response.status_code, 200)
+        listed = list_response.get_json()[0]
+        list_response.close()
+        self.assertNotIn("nasPath", listed)
+        self.assertNotIn("gitRepo", listed)
+
+    def test_project_update_rejects_duplicate_project_name(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        first = self.client.post(
+            "/api/projects",
+            json={"name": "First project", "localPath": "D:\\first", "created": "2026-08-20"},
+            headers=access_headers,
+        )
+        second = self.client.post(
+            "/api/projects",
+            json={"name": "Second project", "localPath": "D:\\second", "created": "2026-08-21"},
+            headers=access_headers,
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        first_id = first.get_json()["item"]["id"]
+        first.close()
+        second.close()
+
+        duplicate = self.client.patch(
+            "/api/projects/%s" % first_id,
+            json={"name": "Second project", "localPath": "D:\\first", "created": "2026-08-20"},
+            headers=access_headers,
+        )
+
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(duplicate.get_json()["error"], "Project name already exists")
+        duplicate.close()
+
     def test_create_todo_accepts_detail_fields_and_screenshot(self):
         access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
         response = self.client.post(

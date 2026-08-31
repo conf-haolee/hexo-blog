@@ -473,6 +473,17 @@ body {
     white-space: nowrap;
 }
 
+.project-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.project-edit-button {
+    flex-shrink: 0;
+}
+
 .project-card h3 {
     font-size: 15px;
     font-weight: 600;

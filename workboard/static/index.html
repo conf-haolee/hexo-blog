@@ -181,6 +181,28 @@
                 </div>
             </form>
         </dialog>
+        <dialog id="projectEditDialog">
+            <div class="dialog-head">
+                <h2>编辑项目</h2>
+                <button class="icon-button" id="closeProjectEdit" type="button" aria-label="关闭">×</button>
+            </div>
+            <form id="projectEditForm" class="stack-form project-edit-form">
+                <input id="projectEditName" required placeholder="项目名称">
+                <input id="projectEditNasPath" placeholder="NAS 路径（可选）">
+                <input id="projectEditLocalPath" placeholder="本地路径（可选）">
+                <input id="projectEditGitRepo" placeholder="Git 仓库路径（可选）">
+                <div class="form-row">
+                    <label class="field-label">项目日期<input id="projectEditCreated" required type="date"></label>
+                    <input id="projectEditTags" placeholder="标签，用逗号分隔">
+                </div>
+                <input id="projectEditCategories" placeholder="分类，用逗号分隔">
+                <textarea id="projectEditDescription" rows="4" placeholder="项目描述"></textarea>
+                <div class="dialog-actions">
+                    <button class="button ghost" id="cancelProjectEdit" type="button">取消</button>
+                    <button class="button primary" type="submit">保存项目</button>
+                </div>
+            </form>
+        </dialog>
         <dialog id="summaryDialog">
             <div class="dialog-head">
                 <h2 id="summaryTitle">工作总结</h2>
@@ -234,6 +256,6 @@
             </div>
         </dialog>
     </div>
-    <script src="script.js?v=20260831-search-hints"></script>
+    <script src="script.js?v=20260831-project-edit"></script>
 </body>
 </html>

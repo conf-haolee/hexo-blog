@@ -506,6 +506,22 @@ def row_to_internal_project(row):
     }
 
 
+def row_to_project_detail(row):
+    result = row_to_internal_project(row)
+    public_project = row_to_project(row)
+    result["gitInfo"] = public_project["gitInfo"]
+    result["pathStatus"] = public_project["pathStatus"]
+    result["pathLabel"] = public_project["pathLabel"]
+    return result
+
+
+def project_row_or_404(project_id):
+    row = get_db().execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        abort(404)
+    return row
+
+
 def enrich_projects():
     projects = [row_to_project(row) for row in load_project_rows()]
     projects.sort(
@@ -1241,6 +1257,37 @@ def create_project():
         return jsonify({"error": "Project name already exists"}), 400
     row = get_db().execute("SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)).fetchone()
     return jsonify({"success": True, "item": row_to_project(row)})
+
+
+@app.route("/api/projects/<int:project_id>", methods=["GET"])
+def get_project_detail(project_id):
+    return jsonify(row_to_project_detail(project_row_or_404(project_id)))
+
+
+@app.route("/api/projects/<int:project_id>", methods=["PATCH"])
+def update_project(project_id):
+    project_row_or_404(project_id)
+    payload = request.get_json(silent=True) or {}
+    existing = [project for project in load_projects() if project["id"] != project_id]
+    try:
+        project = normalize_project_payload(payload, existing)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        get_db().execute(
+            """
+            UPDATE projects
+            SET name = ?, description = ?, local_path = ?, nas_path = ?, git_repo = ?,
+                categories_json = ?, tags_json = ?, created = ?
+            WHERE id = ?
+            """,
+            (*project_values(project), project_id),
+        )
+        get_db().commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Project name already exists"}), 400
+    row = project_row_or_404(project_id)
+    return jsonify({"success": True, "item": row_to_project_detail(row)})
 
 
 @app.route("/api/settings/ai", methods=["GET"])
