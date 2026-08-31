@@ -40,6 +40,7 @@
         document.getElementById('refreshButton').addEventListener('click', () => this.load());
         document.getElementById('logoutButton').addEventListener('click', () => this.logout());
         document.getElementById('searchInput').addEventListener('input', () => this.renderSearchResults());
+        document.getElementById('clearSearchButton').addEventListener('click', () => this.clearSearch());
         document.getElementById('archiveToggle').addEventListener('click', () => this.toggleArchiveTimeline());
         document.getElementById('settingsButton').addEventListener('click', () => this.openSettings());
         document.getElementById('closeSettings').addEventListener('click', () => {
@@ -122,6 +123,7 @@
     }
 
     renderAll() {
+        this.renderSearchStatus();
         this.renderStats();
         this.renderProjectSelect();
         this.renderProjects();
@@ -159,10 +161,28 @@
     }
 
     renderSearchResults() {
+        this.renderSearchStatus();
         this.renderStats();
         this.renderProjects();
         this.renderTodos();
         this.renderArchiveTimeline();
+    }
+
+    renderSearchStatus() {
+        var query = this.getSearchQuery();
+        var status = document.getElementById('searchStatus');
+        var text = document.getElementById('searchStatusText');
+        if (!status || !text) return;
+        status.hidden = !query;
+        text.innerHTML = query ? '搜索中：' + this.highlightSearch(query) : '';
+    }
+
+    clearSearch() {
+        var input = document.getElementById('searchInput');
+        if (!input) return;
+        input.value = '';
+        this.renderSearchResults();
+        input.focus();
     }
 
     getSearchQuery() {
@@ -219,6 +239,27 @@
         return (this.todos[status] || []).filter(item => this.todoMatchesSearch(item));
     }
 
+    escapeRegExp(value) {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    highlightSearch(value) {
+        var text = value == null ? '' : String(value);
+        var query = this.getSearchQuery();
+        if (!query) return this.escape(text);
+        var pattern = new RegExp('(' + this.escapeRegExp(query) + ')', 'ig');
+        var result = '';
+        var lastIndex = 0;
+        text.replace(pattern, (match, _group, offset) => {
+            result += this.escape(text.slice(lastIndex, offset));
+            result += '<mark class="search-highlight">' + this.escape(match) + '</mark>';
+            lastIndex = offset + match.length;
+            return match;
+        });
+        result += this.escape(text.slice(lastIndex));
+        return result;
+    }
+
     renderProjects() {
         var filtered = this.projects.filter(project => this.projectMatchesSearch(project));
         document.getElementById('projectResultCount').textContent = filtered.length + ' 个结果';
@@ -236,20 +277,22 @@
         card.className = 'project-card';
         var git = project.gitInfo;
         var pathStatus = project.pathStatus || {};
-        var tags = (project.tags || []).map(tag => '<span class="tag">' + this.escape(tag) + '</span>').join('');
-        var categories = (project.categories || []).map(tag => '<span class="category">' + this.escape(tag) + '</span>').join('');
+        var tags = (project.tags || []).map(tag => '<span class="tag">' + this.highlightSearch(tag) + '</span>').join('');
+        var categories = (project.categories || []).map(tag => '<span class="category">' + this.highlightSearch(tag) + '</span>').join('');
         var commits = this.projectCommitList(project);
+        var nasState = 'NAS ' + (pathStatus.nasExists ? '可用' : '未连接');
+        var gitState = git ? git.branch : '无 Git 信息';
         card.classList.add('openable');
         card.title = project.localPath ? '双击打开本地路径：' + project.localPath : '双击提示配置本地路径';
         card.innerHTML =
             '<div class="card-top"><span class="project-id">#' + project.id + '</span>' +
-            '<span class="path-label">' + this.escape(project.pathLabel || '路径未配置') + '</span></div>' +
-            '<h3>' + this.escape(project.name) + '</h3>' +
-            '<p class="muted description">' + this.escape(project.description || '暂无描述') + '</p>' +
+            '<span class="path-label">' + this.highlightSearch(project.pathLabel || '路径未配置') + '</span></div>' +
+            '<h3>' + this.highlightSearch(project.name) + '</h3>' +
+            '<p class="muted description">' + this.highlightSearch(project.description || '暂无描述') + '</p>' +
             '<div class="tag-row">' + tags + categories + '</div>' +
             '<div class="project-meta">' +
-            '<span class="path-state ' + (pathStatus.nasExists ? 'good' : '') + '">NAS ' + (pathStatus.nasExists ? '可用' : '未连接') + '</span>' +
-            '<span class="path-state ' + (git ? 'good' : '') + '">' + (git ? this.escape(git.branch) : '无 Git 信息') + '</span>' +
+            '<span class="path-state ' + (pathStatus.nasExists ? 'good' : '') + '">' + this.highlightSearch(nasState) + '</span>' +
+            '<span class="path-state ' + (git ? 'good' : '') + '">' + this.highlightSearch(gitState) + '</span>' +
             '</div>' +
             commits;
         card.addEventListener('dblclick', event => {
@@ -264,10 +307,10 @@
         var commits = gitInfo.commits ? gitInfo.commits.slice(0, 3) : [];
         if (!commits.length) return '';
         return '<div class="project-commit-list">' + commits.map(commit => {
+            var meta = (commit.relative_date || commit.date || '') + ' · ' + (commit.hash || '');
             return '<div class="project-commit">' +
-                '<span class="commit-message">' + this.escape(commit.message || '') + '</span>' +
-                '<span class="commit-meta">' + this.escape(commit.relative_date || commit.date || '') +
-                ' · ' + this.escape(commit.hash || '') + '</span>' +
+                '<span class="commit-message">' + this.highlightSearch(commit.message || '') + '</span>' +
+                '<span class="commit-meta">' + this.highlightSearch(meta) + '</span>' +
                 '</div>';
         }).join('') + '</div>';
     }
@@ -284,7 +327,7 @@
             var card = document.createElement('article');
             card.className = 'todo-item';
             card.dataset.todoId = String(item.id);
-            var due = item.dueAt ? '<span>截止 ' + this.escape(item.dueAt.replace('T', ' ')) + '</span>' : '';
+            var dueText = item.dueAt ? '截止 ' + item.dueAt.replace('T', ' ') : '';
             var projectName = item.projectName === 'Temporary work' ? '临时工作' : (item.projectName || '临时工作');
             var screenshot = item.screenshotUrl
                 ? '<button class="todo-shot" type="button" aria-label="查看任务截图"><img src="' + this.api + '/todos/' + item.id + '/screenshot" alt="任务截图"></button>'
@@ -297,16 +340,16 @@
             card.innerHTML =
                 '<div class="todo-card-top"><span class="project-id">TASK #' + item.id + '</span><span class="progress">' + item.progress + '%</span></div>' +
                 '<div class="todo-main"><button class="check" type="button" aria-label="完成任务"></button>' +
-                '<div><h3>' + this.escape(item.name) + '</h3><p class="muted">' + this.escape(projectName) +
-                (item.projectNumber ? ' · ' + this.escape(item.projectNumber) : '') + '</p></div></div>' +
-                '<div class="todo-detail-row"><span>联系人 ' + this.escape(item.contact || '未填写') + '</span><span>日期 ' + this.escape(item.taskDate || '-') + '</span></div>' +
-                (item.localPath ? '<div class="todo-detail-row"><span>本地 ' + this.escape(item.localPath) + '</span></div>' : '') +
-                (item.notes ? '<p class="todo-notes">' + this.escape(item.notes) + '</p>' : '') + screenshot +
-                (archiveLabel ? '<div class="archive-status' + archiveClass + '">' + archiveLabel + '</div>' + archiveError : '') +
+                '<div><h3>' + this.highlightSearch(item.name) + '</h3><p class="muted">' + this.highlightSearch(projectName) +
+                (item.projectNumber ? ' · ' + this.highlightSearch(item.projectNumber) : '') + '</p></div></div>' +
+                '<div class="todo-detail-row"><span>联系人 ' + this.highlightSearch(item.contact || '未填写') + '</span><span>日期 ' + this.highlightSearch(item.taskDate || '-') + '</span></div>' +
+                (item.localPath ? '<div class="todo-detail-row"><span>本地 ' + this.highlightSearch(item.localPath) + '</span></div>' : '') +
+                (item.notes ? '<p class="todo-notes">' + this.highlightSearch(item.notes) + '</p>' : '') + screenshot +
+                (archiveLabel ? '<div class="archive-status' + archiveClass + '">' + this.highlightSearch(archiveLabel) + '</div>' + archiveError : '') +
                 '<div class="todo-actions"><span class="progress">' + item.progress + '%</span>' +
                 '<button class="link-button document-button" type="button">记录</button>' +
                 '<button class="link-button complete-button" type="button">完成</button>' +
-                '</div><div class="todo-due muted small">' + due + '</div>';
+                '</div><div class="todo-due muted small">' + (dueText ? '<span>' + this.highlightSearch(dueText) + '</span>' : '') + '</div>';
             card.addEventListener('click', () => {
                 clearTimeout(this.todoClickTimer);
                 this.todoClickTimer = setTimeout(() => this.openTodoEditor(item), 180);
@@ -372,10 +415,10 @@
             var projectName = item.projectName === 'Temporary work' ? '临时工作' : (item.projectName || '临时工作');
             var projectMeta = projectName + (item.projectNumber ? ' · ' + item.projectNumber : '');
             return '<article class="archive-timeline-item">' +
-                '<time class="archive-timeline-time">' + this.escape(completedAt) + '</time>' +
-                '<h3>' + this.escape(item.name || '未命名任务') + '</h3>' +
-                '<p class="archive-timeline-meta">' + this.escape(projectMeta) + '</p>' +
-                '<p class="archive-timeline-summary">' + this.escape(this.archiveSummary(item)) + '</p>' +
+                '<time class="archive-timeline-time">' + this.highlightSearch(completedAt) + '</time>' +
+                '<h3>' + this.highlightSearch(item.name || '未命名任务') + '</h3>' +
+                '<p class="archive-timeline-meta">' + this.highlightSearch(projectMeta) + '</p>' +
+                '<p class="archive-timeline-summary">' + this.highlightSearch(this.archiveSummary(item)) + '</p>' +
                 '</article>';
         }).join('') + '</div>';
     }
@@ -606,7 +649,11 @@
             this.showNotice('项目已保存');
             await this.load();
         } catch (error) {
-            this.showNotice(error.message, true);
+            var message = error.message;
+            if (/project name already exists/i.test(message) || /项目.*已.*存在/.test(message)) {
+                message += '。如果项目不可见，请清空搜索条件。';
+            }
+            this.showNotice(message, true);
         }
     }
 

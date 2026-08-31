@@ -326,6 +326,34 @@ body {
 }
 .search input::placeholder { color: var(--text-muted); }
 
+.search-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 209, 102, 0.28);
+    border-radius: 999px;
+    background: rgba(255, 209, 102, 0.08);
+    color: var(--accent-yellow);
+    font-size: 12px;
+}
+
+.search-status[hidden] {
+    display: none;
+}
+
+.search-status .link-button {
+    color: var(--accent-yellow);
+}
+
+.search-highlight {
+    padding: 0 2px;
+    border-radius: 4px;
+    background: rgba(255, 209, 102, 0.32);
+    color: #fff5cc;
+}
+
 /* --- Section head --- */
 .section-head {
     display: flex;

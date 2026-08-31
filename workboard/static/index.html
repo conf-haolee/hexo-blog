@@ -31,6 +31,10 @@
                         <span aria-hidden="true">⌕</span>
                         <input id="searchInput" type="search" placeholder="搜索项目、任务、联系人、标签、分类或描述">
                     </label>
+                    <div id="searchStatus" class="search-status" hidden>
+                        <span id="searchStatusText"></span>
+                        <button class="link-button" id="clearSearchButton" type="button">清空搜索</button>
+                    </div>
                 </div>
                 <div class="toolbar-actions">
                     <button class="button ghost" id="summaryToday" type="button">今日总结</button>
@@ -230,6 +234,6 @@
             </div>
         </dialog>
     </div>
-    <script src="script.js?v=20260831-global-search"></script>
+    <script src="script.js?v=20260831-search-hints"></script>
 </body>
 </html>

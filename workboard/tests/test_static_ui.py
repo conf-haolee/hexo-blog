@@ -130,6 +130,25 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("没有匹配的任务。", self.script)
         self.assertIn("没有匹配的归档任务。", self.script)
 
+    def test_search_status_and_highlight_controls_are_present(self):
+        self.assertEqual(self.parser.by_id["searchStatus"]["tag"], "div")
+        self.assertEqual(self.parser.by_id["searchStatusText"]["tag"], "span")
+        self.assertEqual(self.parser.by_id["clearSearchButton"]["tag"], "button")
+        self.assertIn("search-status", self.parser.by_id["searchStatus"]["attrs"].get("class", ""))
+        self.assertIn("renderSearchStatus", self.script)
+        self.assertIn("clearSearch", self.script)
+        self.assertIn("highlightSearch", self.script)
+        self.assertIn("escapeRegExp", self.script)
+        self.assertIn("search-highlight", self.script)
+        self.assertIn("如果项目不可见，请清空搜索条件", self.script)
+        self.assertIn(".search-highlight", self.css)
+
+    def test_duplicate_project_tip_belongs_to_project_creation(self):
+        open_project = self.script.split("async openProjectFolder")[1].split("async saveTodoEdit")[0]
+        create_project = self.script.split("async createProject")[1].split("async generateSummary")[0]
+        self.assertNotIn("如果项目不可见，请清空搜索条件", open_project)
+        self.assertIn("如果项目不可见，请清空搜索条件", create_project)
+
 
 if __name__ == "__main__":
     unittest.main()
