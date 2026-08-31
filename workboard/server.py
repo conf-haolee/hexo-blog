@@ -86,6 +86,11 @@ DEFAULT_AI_SETTINGS = {
     "baseUrl": "https://api.deepseek.com/v1",
     "apiKey": "",
 }
+KNOWLEDGE_TYPES = {
+    "internal_docs": "内部技术文档",
+    "skill_packages": "skill 技能包",
+    "efficiency_software": "定制效率软件",
+}
 
 app = Flask(__name__, static_folder=str(STATIC_DIR))
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
@@ -190,6 +195,13 @@ def init_db(connection):
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            local_path TEXT NOT NULL,
+            created_at TEXT NOT NULL
         );
         """
     )
@@ -517,6 +529,55 @@ def row_to_project_detail(row):
 
 def project_row_or_404(project_id):
     row = get_db().execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        abort(404)
+    return row
+
+
+def normalize_knowledge_payload(payload):
+    name = str(payload.get("name") or "").strip()
+    item_type = str(payload.get("type") or "").strip()
+    local_path = str(payload.get("localPath") or "").strip()
+    if not name:
+        raise ValueError("Knowledge name is required")
+    if item_type not in KNOWLEDGE_TYPES:
+        raise ValueError("Knowledge type is invalid")
+    if not local_path:
+        raise ValueError("Knowledge local path is required")
+    return {
+        "name": name,
+        "type": item_type,
+        "localPath": local_path,
+        "createdAt": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def row_to_knowledge_item(row):
+    local_path = str(row["local_path"] or "")
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "type": row["item_type"],
+        "typeLabel": KNOWLEDGE_TYPES.get(row["item_type"], row["item_type"]),
+        "localPath": local_path,
+        "createdAt": row["created_at"],
+        "pathStatus": {
+            "localExists": bool(local_path and Path(local_path).exists()),
+        },
+    }
+
+
+def load_knowledge_items():
+    rows = get_db().execute(
+        "SELECT * FROM knowledge_items ORDER BY id DESC"
+    ).fetchall()
+    return [row_to_knowledge_item(row) for row in rows]
+
+
+def knowledge_row_or_404(item_id):
+    row = get_db().execute(
+        "SELECT * FROM knowledge_items WHERE id = ?", (item_id,)
+    ).fetchone()
     if row is None:
         abort(404)
     return row
@@ -1305,6 +1366,31 @@ def update_ai_settings():
     return jsonify({"success": True, "settings": serialize_ai_settings(settings)})
 
 
+@app.route("/api/knowledge", methods=["GET"])
+def get_knowledge_items():
+    return jsonify(load_knowledge_items())
+
+
+@app.route("/api/knowledge", methods=["POST"])
+def create_knowledge_item():
+    try:
+        item = normalize_knowledge_payload(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    cursor = get_db().execute(
+        """
+        INSERT INTO knowledge_items (name, item_type, local_path, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (item["name"], item["type"], item["localPath"], item["createdAt"]),
+    )
+    get_db().commit()
+    row = get_db().execute(
+        "SELECT * FROM knowledge_items WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return jsonify({"success": True, "item": row_to_knowledge_item(row)})
+
+
 def open_path_in_explorer(path):
     subprocess.Popen(["explorer.exe", str(path)])
 
@@ -1322,6 +1408,19 @@ def open_project_folder(project_id):
     path = Path(local_path).expanduser().resolve(strict=False)
     if not path.exists():
         return jsonify({"error": "Project local path does not exist"}), 404
+    open_path_in_explorer(path)
+    return jsonify({"success": True, "path": str(path)})
+
+
+@app.route("/api/knowledge/<int:item_id>/open", methods=["POST"])
+def open_knowledge_item(item_id):
+    row = knowledge_row_or_404(item_id)
+    local_path = str(row["local_path"] or "").strip()
+    if not local_path:
+        return jsonify({"error": "Knowledge local path is not configured"}), 409
+    path = Path(local_path).expanduser().resolve(strict=False)
+    if not path.exists():
+        return jsonify({"error": "Knowledge local path does not exist"}), 404
     open_path_in_explorer(path)
     return jsonify({"success": True, "path": str(path)})
 

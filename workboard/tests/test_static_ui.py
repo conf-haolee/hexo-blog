@@ -82,6 +82,38 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("/projects/' + this.editingProject.id", self.script)
         self.assertNotIn("card.addEventListener('click', () => this.openProjectEditor", self.script)
 
+    def test_knowledge_panel_has_three_sections_limited_lists_and_expand_dialog(self):
+        ids = self.parser.ids
+        self.assertLess(ids.index("sec-projects"), ids.index("sec-knowledge"))
+        self.assertLess(ids.index("sec-knowledge"), ids.index("sec-heatmap"))
+        self.assertEqual(self.parser.by_id["knowledgeGroups"]["tag"], "div")
+        self.assertEqual(self.parser.by_id["knowledgeDialog"]["tag"], "dialog")
+        self.assertEqual(self.parser.by_id["knowledgeDialogList"]["tag"], "div")
+        for element_id in (
+            "knowledge-internal_docs",
+            "knowledge-skill_packages",
+            "knowledge-efficiency_software",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertIn(element_id, self.parser.by_id)
+        self.assertIn("内部技术文档", self.html)
+        self.assertIn("skill 技能包", self.html)
+        self.assertIn("定制效率软件", self.html)
+        self.assertIn("renderKnowledge", self.script)
+        self.assertIn("knowledgeItemsForType(type).slice(0, 5)", self.script)
+        self.assertIn("openKnowledgeDialog", self.script)
+        self.assertIn("knowledge-open-button", self.script)
+
+    def test_add_knowledge_form_lives_under_add_project_panel(self):
+        ids = self.parser.ids
+        self.assertLess(ids.index("projectForm"), ids.index("knowledgeForm"))
+        self.assertEqual(self.parser.by_id["knowledgeForm"]["tag"], "form")
+        self.assertEqual(self.parser.by_id["knowledgeName"]["tag"], "input")
+        self.assertEqual(self.parser.by_id["knowledgeType"]["tag"], "select")
+        self.assertEqual(self.parser.by_id["knowledgeLocalPath"]["tag"], "input")
+        self.assertIn("createKnowledgeItem", self.script)
+        self.assertIn("/knowledge", self.script)
+
     def test_top_status_cards_are_removed_and_task_count_moves_into_task_panel(self):
         ids = self.parser.ids
         self.assertNotIn("statusCards", self.parser.by_id)
@@ -144,10 +176,11 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("项目未配置本地路径", self.script)
 
     def test_search_bar_filters_projects_active_tasks_and_archive_timeline(self):
-        self.assertIn("placeholder=\"搜索项目、任务、联系人、标签、分类或描述\"", self.html)
+        self.assertIn("placeholder=\"搜索项目、任务、知识库、联系人、标签、分类或描述\"", self.html)
         self.assertIn("getSearchQuery", self.script)
         self.assertIn("projectMatchesSearch", self.script)
         self.assertIn("todoMatchesSearch", self.script)
+        self.assertIn("knowledgeMatchesSearch", self.script)
         self.assertIn("this.filteredTodos('todo')", self.script)
         self.assertIn("this.filteredTodos('done')", self.script)
         self.assertIn("没有匹配的任务。", self.script)

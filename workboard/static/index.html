@@ -29,7 +29,7 @@
                     <p class="eyebrow">QUICK FIND</p>
                     <label class="search">
                         <span aria-hidden="true">⌕</span>
-                        <input id="searchInput" type="search" placeholder="搜索项目、任务、联系人、标签、分类或描述">
+                        <input id="searchInput" type="search" placeholder="搜索项目、任务、知识库、联系人、标签、分类或描述">
                     </label>
                     <div id="searchStatus" class="search-status" hidden>
                         <span id="searchStatusText"></span>
@@ -68,6 +68,39 @@
                             <span class="muted small" id="projectResultCount">0 个结果</span>
                         </div>
                         <div id="projects" class="project-grid"></div>
+                    </section>
+
+                    <section class="panel" id="sec-knowledge">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">KNOWLEDGE</p>
+                                <h2>知识库面板</h2>
+                            </div>
+                            <span class="muted small" id="knowledgeResultCount">0 个结果</span>
+                        </div>
+                        <div id="knowledgeGroups" class="knowledge-groups">
+                            <section class="knowledge-group" id="knowledge-internal_docs">
+                                <div class="knowledge-group-head">
+                                    <h3>内部技术文档</h3>
+                                    <button class="link-button knowledge-expand-button" type="button" data-type="internal_docs">展开全部</button>
+                                </div>
+                                <div class="knowledge-list" id="knowledgeList-internal_docs"></div>
+                            </section>
+                            <section class="knowledge-group" id="knowledge-skill_packages">
+                                <div class="knowledge-group-head">
+                                    <h3>skill 技能包</h3>
+                                    <button class="link-button knowledge-expand-button" type="button" data-type="skill_packages">展开全部</button>
+                                </div>
+                                <div class="knowledge-list" id="knowledgeList-skill_packages"></div>
+                            </section>
+                            <section class="knowledge-group" id="knowledge-efficiency_software">
+                                <div class="knowledge-group-head">
+                                    <h3>定制效率软件</h3>
+                                    <button class="link-button knowledge-expand-button" type="button" data-type="efficiency_software">展开全部</button>
+                                </div>
+                                <div class="knowledge-list" id="knowledgeList-efficiency_software"></div>
+                            </section>
+                        </div>
                     </section>
 
                     <section class="panel" id="sec-heatmap">
@@ -136,6 +169,25 @@
                             <input id="projectCategories" placeholder="分类，用逗号分隔">
                             <textarea id="projectDescription" rows="3" placeholder="项目描述"></textarea>
                             <button class="button primary full" type="submit">保存项目</button>
+                        </form>
+                    </section>
+
+                    <section class="panel" id="sec-add-knowledge">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">CAPTURE</p>
+                                <h2>新增知识库</h2>
+                            </div>
+                        </div>
+                        <form id="knowledgeForm" class="stack-form">
+                            <input id="knowledgeName" required maxlength="160" placeholder="名称">
+                            <select id="knowledgeType" required>
+                                <option value="internal_docs">内部技术文档</option>
+                                <option value="skill_packages">skill 技能包</option>
+                                <option value="efficiency_software">定制效率软件</option>
+                            </select>
+                            <input id="knowledgeLocalPath" required placeholder="加载本地路径">
+                            <button class="button primary full" type="submit">保存知识库</button>
                         </form>
                     </section>
                 </aside>
@@ -211,6 +263,13 @@
             <p class="muted" id="summaryMeta"></p>
             <div id="summaryContent" class="summary-content">正在生成...</div>
         </dialog>
+        <dialog id="knowledgeDialog">
+            <div class="dialog-head">
+                <h2 id="knowledgeDialogTitle">知识库列表</h2>
+                <button class="icon-button" id="closeKnowledgeDialog" type="button" aria-label="关闭">×</button>
+            </div>
+            <div id="knowledgeDialogList" class="knowledge-dialog-list"></div>
+        </dialog>
         <dialog id="settingsDialog" class="settings-dialog">
             <div class="dialog-head">
                 <div>
@@ -256,6 +315,6 @@
             </div>
         </dialog>
     </div>
-    <script src="script.js?v=20260831-project-edit"></script>
+    <script src="script.js?v=20260831-knowledge-panel"></script>
 </body>
 </html>

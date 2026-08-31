@@ -4,6 +4,7 @@
         var basePath = meta ? meta.content.replace(/\/$/, '') : '';
         this.api = (basePath ? basePath : '') + '/api';
         this.projects = [];
+        this.knowledge = [];
         this.todos = { todo: [], done: [], limits: { maxTodoItems: 12 } };
         this.csrfToken = null;
         this.noticeTimer = null;
@@ -13,6 +14,11 @@
         this.todoClickTimer = null;
         this.archiveExpanded = false;
         this.aiSettings = null;
+        this.knowledgeTypes = [
+            { value: 'internal_docs', label: '内部技术文档' },
+            { value: 'skill_packages', label: 'skill 技能包' },
+            { value: 'efficiency_software', label: '定制效率软件' }
+        ];
         this.bind();
         this.load();
     }
@@ -66,6 +72,16 @@
             event.preventDefault();
             this.createProject();
         });
+        document.getElementById('knowledgeForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.createKnowledgeItem();
+        });
+        document.querySelectorAll('.knowledge-expand-button').forEach(button => {
+            button.addEventListener('click', () => this.openKnowledgeDialog(button.dataset.type));
+        });
+        document.getElementById('closeKnowledgeDialog').addEventListener('click', () => {
+            document.getElementById('knowledgeDialog').close();
+        });
         document.getElementById('summaryToday').addEventListener('click', () => this.generateSummary('today'));
         document.getElementById('summaryWeek').addEventListener('click', () => this.generateSummary('week'));
         document.getElementById('closeSummary').addEventListener('click', () => {
@@ -110,12 +126,14 @@
                 this.request('/health'),
                 this.request('/projects'),
                 this.request('/todos'),
-                this.request('/contributions')
+                this.request('/contributions'),
+                this.request('/knowledge')
             ]);
             this.csrfToken = results[0].csrfToken || null;
             this.projects = results[2];
             this.todos = results[3];
             this.contributions = results[4] || {};
+            this.knowledge = results[5] || [];
             this.renderAll();
             this.setStatus('在线', true);
             this.loadAiSettings();
@@ -134,6 +152,7 @@
         this.renderStats();
         this.renderProjectSelect();
         this.renderProjects();
+        this.renderKnowledge();
         this.renderTodos();
         this.renderArchiveTimeline();
         this.renderHeatmap();
@@ -171,6 +190,7 @@
         this.renderSearchStatus();
         this.renderStats();
         this.renderProjects();
+        this.renderKnowledge();
         this.renderTodos();
         this.renderArchiveTimeline();
     }
@@ -240,6 +260,19 @@
             item.localPath,
             this.archiveStatusLabel(item.archiveStatus)
         ]);
+    }
+
+    knowledgeMatchesSearch(item) {
+        return this.textMatchesSearch([
+            item.name,
+            item.type,
+            item.typeLabel,
+            item.localPath
+        ]);
+    }
+
+    knowledgeItemsForType(type) {
+        return (this.knowledge || []).filter(item => item.type === type && this.knowledgeMatchesSearch(item));
     }
 
     filteredTodos(status) {
@@ -372,6 +405,74 @@
             this.showNotice('项目信息已更新');
             this.closeProjectEditor();
             await this.load();
+        } catch (error) {
+            this.showNotice(error.message, true);
+        }
+    }
+
+    renderKnowledge() {
+        var total = 0;
+        this.knowledgeTypes.forEach(typeInfo => {
+            var type = typeInfo.value;
+            var items = this.knowledgeItemsForType(type);
+            total += items.length;
+            var container = document.getElementById('knowledgeList-' + type);
+            if (!container) return;
+            container.innerHTML = '';
+            var visibleItems = this.knowledgeItemsForType(type).slice(0, 5);
+            if (!visibleItems.length) {
+                container.innerHTML = '<p class="empty small">暂无内容。</p>';
+            } else {
+                visibleItems.forEach(item => container.appendChild(this.knowledgeRow(item)));
+            }
+            var button = document.querySelector('.knowledge-expand-button[data-type="' + type + '"]');
+            if (button) {
+                button.textContent = items.length > 5 ? '展开全部 ' + items.length : '查看全部';
+            }
+        });
+        var resultCount = document.getElementById('knowledgeResultCount');
+        if (resultCount) resultCount.textContent = total + ' 个结果';
+    }
+
+    knowledgeRow(item) {
+        var row = document.createElement('div');
+        row.className = 'knowledge-row';
+        var localExists = item.pathStatus && item.pathStatus.localExists;
+        row.innerHTML =
+            '<div class="knowledge-row-main">' +
+            '<strong>' + this.highlightSearch(item.name) + '</strong>' +
+            '<span class="muted small">' + this.highlightSearch(item.localPath || '') + '</span>' +
+            '</div>' +
+            '<div class="knowledge-row-actions">' +
+            '<span class="path-state ' + (localExists ? 'good' : '') + '">' + (localExists ? '本地可用' : '路径待确认') + '</span>' +
+            '<button class="link-button knowledge-open-button" type="button">打开</button>' +
+            '</div>';
+        row.querySelector('.knowledge-open-button').addEventListener('click', event => {
+            event.stopPropagation();
+            this.openKnowledgeItem(item);
+        });
+        return row;
+    }
+
+    openKnowledgeDialog(type) {
+        var typeInfo = this.knowledgeTypes.find(item => item.value === type);
+        if (!typeInfo) return;
+        var items = this.knowledgeItemsForType(type);
+        document.getElementById('knowledgeDialogTitle').textContent = typeInfo.label + '（' + items.length + '）';
+        var container = document.getElementById('knowledgeDialogList');
+        container.innerHTML = '';
+        if (!items.length) {
+            container.innerHTML = '<p class="empty">暂无内容。</p>';
+        } else {
+            items.forEach(item => container.appendChild(this.knowledgeRow(item)));
+        }
+        document.getElementById('knowledgeDialog').showModal();
+    }
+
+    async openKnowledgeItem(item) {
+        try {
+            await this.request('/knowledge/' + item.id + '/open', { method: 'POST' });
+            this.showNotice('已请求打开知识库路径');
         } catch (error) {
             this.showNotice(error.message, true);
         }
@@ -716,6 +817,26 @@
                 message += '。如果项目不可见，请清空搜索条件。';
             }
             this.showNotice(message, true);
+        }
+    }
+
+    async createKnowledgeItem() {
+        var payload = {
+            name: document.getElementById('knowledgeName').value.trim(),
+            type: document.getElementById('knowledgeType').value,
+            localPath: document.getElementById('knowledgeLocalPath').value.trim()
+        };
+        try {
+            await this.request('/knowledge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            document.getElementById('knowledgeForm').reset();
+            this.showNotice('知识库已保存');
+            await this.load();
+        } catch (error) {
+            this.showNotice(error.message, true);
         }
     }
 

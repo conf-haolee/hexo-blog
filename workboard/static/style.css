@@ -484,6 +484,76 @@ body {
     flex-shrink: 0;
 }
 
+.knowledge-groups {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.knowledge-group {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(16, 24, 32, 0.56);
+    padding: 14px;
+    min-width: 0;
+}
+
+.knowledge-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.knowledge-group-head h3 {
+    font-size: 14px;
+    margin: 0;
+}
+
+.knowledge-list,
+.knowledge-dialog-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.knowledge-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-soft);
+}
+
+.knowledge-row-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.knowledge-row-main strong,
+.knowledge-row-main span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.knowledge-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.knowledge-dialog-list {
+    min-width: min(760px, 78vw);
+}
+
 .project-card h3 {
     font-size: 15px;
     font-weight: 600;

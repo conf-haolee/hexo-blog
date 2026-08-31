@@ -836,6 +836,59 @@ class WorkboardApiTests(unittest.TestCase):
         self.assertEqual(duplicate.get_json()["error"], "Project name already exists")
         duplicate.close()
 
+    def test_knowledge_items_create_list_and_open_local_path(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        local_dir = Path(self.temp_dir.name) / "knowledge-doc"
+        local_dir.mkdir()
+
+        created = self.client.post(
+            "/api/knowledge",
+            json={
+                "name": "VisionX 通讯调试说明",
+                "type": "internal_docs",
+                "localPath": str(local_dir),
+            },
+            headers=access_headers,
+        )
+        self.assertEqual(created.status_code, 200)
+        item = created.get_json()["item"]
+        created.close()
+        self.assertEqual(item["name"], "VisionX 通讯调试说明")
+        self.assertEqual(item["type"], "internal_docs")
+        self.assertEqual(item["typeLabel"], "内部技术文档")
+        self.assertEqual(item["localPath"], str(local_dir))
+
+        listed = self.client.get("/api/knowledge", headers=access_headers)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.get_json()[0]["name"], "VisionX 通讯调试说明")
+        listed.close()
+
+        with patch("server.open_path_in_explorer") as opener:
+            opened = self.client.post("/api/knowledge/%s/open" % item["id"], headers=access_headers)
+        self.assertEqual(opened.status_code, 200)
+        opener.assert_called_once_with(local_dir.resolve(strict=False))
+        opened.close()
+
+    def test_knowledge_items_reject_unknown_type_and_require_path(self):
+        access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
+        invalid_type = self.client.post(
+            "/api/knowledge",
+            json={"name": "Unknown", "type": "other", "localPath": "D:\\docs"},
+            headers=access_headers,
+        )
+        self.assertEqual(invalid_type.status_code, 400)
+        self.assertEqual(invalid_type.get_json()["error"], "Knowledge type is invalid")
+        invalid_type.close()
+
+        missing_path = self.client.post(
+            "/api/knowledge",
+            json={"name": "No path", "type": "skill_packages", "localPath": ""},
+            headers=access_headers,
+        )
+        self.assertEqual(missing_path.status_code, 400)
+        self.assertEqual(missing_path.get_json()["error"], "Knowledge local path is required")
+        missing_path.close()
+
     def test_create_todo_accepts_detail_fields_and_screenshot(self):
         access_headers = {"Cf-Access-Authenticated-User-Email": "owner@example.com"}
         response = self.client.post(
