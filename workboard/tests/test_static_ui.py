@@ -75,7 +75,7 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("archive-timeline", self.parser.by_id["archiveTimeline"]["attrs"].get("class", ""))
         self.assertIn("renderArchiveTimeline", self.script)
         self.assertIn("toggleArchiveTimeline", self.script)
-        self.assertIn("this.todos.done", self.script)
+        self.assertIn("this.filteredTodos('done')", self.script)
         self.assertIn("resultDescription || item.notes || item.name", self.script)
 
     def test_local_import_controls_live_inside_settings_dialog(self):
@@ -119,6 +119,16 @@ class StaticUITest(unittest.TestCase):
         self.assertIn("card.addEventListener('dblclick'", self.script)
         self.assertIn("this.openProjectFolder(project)", self.script)
         self.assertIn("项目未配置本地路径", self.script)
+
+    def test_search_bar_filters_projects_active_tasks_and_archive_timeline(self):
+        self.assertIn("placeholder=\"搜索项目、任务、联系人、标签、分类或描述\"", self.html)
+        self.assertIn("getSearchQuery", self.script)
+        self.assertIn("projectMatchesSearch", self.script)
+        self.assertIn("todoMatchesSearch", self.script)
+        self.assertIn("this.filteredTodos('todo')", self.script)
+        self.assertIn("this.filteredTodos('done')", self.script)
+        self.assertIn("没有匹配的任务。", self.script)
+        self.assertIn("没有匹配的归档任务。", self.script)
 
 
 if __name__ == "__main__":

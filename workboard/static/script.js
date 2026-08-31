@@ -39,7 +39,7 @@
     bind() {
         document.getElementById('refreshButton').addEventListener('click', () => this.load());
         document.getElementById('logoutButton').addEventListener('click', () => this.logout());
-        document.getElementById('searchInput').addEventListener('input', () => this.renderProjects());
+        document.getElementById('searchInput').addEventListener('input', () => this.renderSearchResults());
         document.getElementById('archiveToggle').addEventListener('click', () => this.toggleArchiveTimeline());
         document.getElementById('settingsButton').addEventListener('click', () => this.openSettings());
         document.getElementById('closeSettings').addEventListener('click', () => {
@@ -131,7 +131,7 @@
     }
 
     renderStats() {
-        var todoCount = Array.isArray(this.todos.todo) ? this.todos.todo.length : 0;
+        var todoCount = this.filteredTodos('todo').length;
         var maxTodoItems = this.todos.limits.maxTodoItems || 12;
         document.getElementById('todoLimit').textContent = '当前任务 ' + todoCount + ' / ' + maxTodoItems;
     }
@@ -158,17 +158,69 @@
         });
     }
 
+    renderSearchResults() {
+        this.renderStats();
+        this.renderProjects();
+        this.renderTodos();
+        this.renderArchiveTimeline();
+    }
+
+    getSearchQuery() {
+        var input = document.getElementById('searchInput');
+        return input ? input.value.trim().toLowerCase() : '';
+    }
+
+    textMatchesSearch(parts) {
+        var query = this.getSearchQuery();
+        if (!query) return true;
+        var text = parts.filter(Boolean).join(' ').toLowerCase();
+        return text.indexOf(query) >= 0;
+    }
+
+    projectMatchesSearch(project) {
+        var gitInfo = project.gitInfo || {};
+        var commits = gitInfo.commits || [];
+        return this.textMatchesSearch([
+            project.name,
+            project.description,
+            project.localPath,
+            project.nasPath,
+            project.gitRepo,
+            project.pathLabel,
+            gitInfo.branch,
+            (project.tags || []).join(' '),
+            (project.categories || []).join(' '),
+            commits.map(commit => [
+                commit.message,
+                commit.hash,
+                commit.date,
+                commit.relative_date
+            ].filter(Boolean).join(' ')).join(' ')
+        ]);
+    }
+
+    todoMatchesSearch(item) {
+        return this.textMatchesSearch([
+            item.name,
+            item.projectName,
+            item.projectNumber,
+            item.contact,
+            item.notes,
+            item.taskDate,
+            item.dueAt,
+            item.completedAt,
+            item.resultDescription,
+            item.localPath,
+            this.archiveStatusLabel(item.archiveStatus)
+        ]);
+    }
+
+    filteredTodos(status) {
+        return (this.todos[status] || []).filter(item => this.todoMatchesSearch(item));
+    }
+
     renderProjects() {
-        var query = document.getElementById('searchInput').value.trim().toLowerCase();
-        var filtered = this.projects.filter(project => {
-            var text = [
-                project.name,
-                project.description,
-                (project.tags || []).join(' '),
-                (project.categories || []).join(' ')
-            ].join(' ').toLowerCase();
-            return !query || text.indexOf(query) >= 0;
-        });
+        var filtered = this.projects.filter(project => this.projectMatchesSearch(project));
         document.getElementById('projectResultCount').textContent = filtered.length + ' 个结果';
         var container = document.getElementById('projects');
         container.innerHTML = '';
@@ -223,9 +275,9 @@
     renderTodos() {
         var container = document.getElementById('todos');
         container.innerHTML = '';
-        var items = this.todos.todo || [];
+        var items = this.filteredTodos('todo');
         if (!items.length) {
-            container.innerHTML = '<p class="empty">暂无任务。</p>';
+            container.innerHTML = '<p class="empty">' + (this.getSearchQuery() ? '没有匹配的任务。' : '暂无任务。') + '</p>';
             return;
         }
         items.forEach(item => {
@@ -304,7 +356,7 @@
         var container = document.getElementById('archiveTimeline');
         var button = document.getElementById('archiveToggle');
         if (!container || !button) return;
-        var items = (this.todos.done || []).slice().sort((left, right) => {
+        var items = this.filteredTodos('done').slice().sort((left, right) => {
             return String(right.completedAt || '').localeCompare(String(left.completedAt || ''));
         });
         button.textContent = this.archiveExpanded ? '收起归档' : '归档任务 ' + items.length;
@@ -312,7 +364,7 @@
         container.hidden = !this.archiveExpanded;
         if (!this.archiveExpanded) return;
         if (!items.length) {
-            container.innerHTML = '<p class="empty">暂无归档任务。</p>';
+            container.innerHTML = '<p class="empty">' + (this.getSearchQuery() ? '没有匹配的归档任务。' : '暂无归档任务。') + '</p>';
             return;
         }
         container.innerHTML = '<div class="archive-timeline-list">' + items.map(item => {
