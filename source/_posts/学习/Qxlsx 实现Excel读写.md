@@ -1,6 +1,7 @@
 ---
 title: Qxlsx 实现Excel读写
 date: 2023-04-21
+permalink: /2023/04/21/qxlsx-excel-reading-writing/
 tags: 
 - Qxlsx
 - Qt

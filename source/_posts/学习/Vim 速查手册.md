@@ -1,6 +1,7 @@
 ---
 title: vim速查手册
 date: 2023-10-15
+permalink: /2023/10/15/vim-cheatsheet/
 tags: 
 -  vim
 categories:

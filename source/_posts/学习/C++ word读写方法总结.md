@@ -1,5 +1,7 @@
 ---
 title: C++ 实现word读写
+date: 2023/04/11
+permalink: /2023/04/11/cpp-word-processing/
 tags: 
 - DuckX
 - minidocx
@@ -98,4 +100,3 @@ https://github.com/kevinlq/QtPythonDocx#%E5%85%B3%E4%BA%8E%E4%BD%9C%E8%80%85
 有文档，有教程，有可运行的项目
 
 需要配置对用python 环境
-

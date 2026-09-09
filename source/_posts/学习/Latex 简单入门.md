@@ -1,6 +1,7 @@
 ---
 title: latex入门手册
 date: 2024-02-02
+permalink: /2024/02/02/latex-basics/
 tags: 
 - latex
 categories:

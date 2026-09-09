@@ -1,7 +1,7 @@
 ---
 title: blender小零件下落场景构建，以及图片自动生成python实现
 date: 2024-09-27
-permalink: /2024/09/27/research-blender-parts-drop/
+permalink: /2024/09/27/blender-parts-drop-dataset/
 pin: false
 tags: 
 - blender

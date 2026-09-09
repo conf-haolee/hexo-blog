@@ -1,6 +1,7 @@
 ---
 title: TYDH_LightDemo 光源控制器 Demo：实现方式说明
 date: 2026-01-14
+permalink: /2026/01/14/tydh-light-demo/
 tags: 
 - C#
 - 机器视觉

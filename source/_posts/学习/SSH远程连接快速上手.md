@@ -1,6 +1,7 @@
 ---
 title: SSH远程连接快速上手
 date: 2023-09-21 20:38:17    
+permalink: /2023/09/21/ssh-getting-started/
 tags: 
 - SSH
 categories:

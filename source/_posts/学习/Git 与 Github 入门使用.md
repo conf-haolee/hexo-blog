@@ -1,6 +1,7 @@
 ---
 title: Git 入门笔记
 date: 2023-04-13
+permalink: /2023/04/13/git-github-basics/
 tags: 
 - git
 - github 

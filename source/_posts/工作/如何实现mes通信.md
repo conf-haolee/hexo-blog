@@ -1,6 +1,7 @@
 ---
 title: 如何实现mes通信
 date: 2023-10-14
+permalink: /2023/10/14/mes-communication/
 tags: 
 - me s
 categories:

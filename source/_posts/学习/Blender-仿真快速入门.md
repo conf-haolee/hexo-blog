@@ -1,7 +1,7 @@
 ---
 title: Blender 仿真快速入门
 date: 2024-09-09
-permalink: /2024/09/09/research-blender-simulation/
+permalink: /2024/09/09/blender-simulation-getting-started/
 tags: 
 - 
 categories:

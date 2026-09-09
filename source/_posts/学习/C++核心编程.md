@@ -1,6 +1,7 @@
 ---
 title: C++ 核心编程
 date: 2019-01-17
+permalink: /2019/01/17/cpp-core-programming/
 tags: 
 - C++
 categories:

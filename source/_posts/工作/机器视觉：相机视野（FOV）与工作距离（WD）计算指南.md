@@ -1,6 +1,7 @@
 ---
 title: 机器视觉：相机视野（FOV）与工作距离（WD）计算指南
 date: 2026-02-10
+permalink: /2026/02/10/camera-fov-working-distance/
 tags: 
 - 机器视觉
 - 调试

@@ -1,6 +1,7 @@
 ---
 title: QXlnt 实现Excel读取Demo 
 date: 2023-04-25
+permalink: /2023/04/25/qxlnt-excel-reading/
 tags: 
 - Qt
 - Qxlnt

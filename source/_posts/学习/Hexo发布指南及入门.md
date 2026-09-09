@@ -1,6 +1,7 @@
 ---
 title: Hexo发布指南及入门
 date: 2023-04-13
+permalink: /2023/04/13/hexo-publishing-guide/
 tags: 
 - hexo
 categories:
@@ -192,4 +193,3 @@ encrypt: # hexo-blog-encrypt
 [Hexo与MarkDown_hexo markdown_小老弟偶的博客-CSDN博客](https://blog.csdn.net/qq_42446156/article/details/107888057)
 
 [对 Hexo 博客文章进行加密](https://zhuanlan.zhihu.com/p/113235573)
-

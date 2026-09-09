@@ -6,6 +6,7 @@ tags:
 - C#
 - C++
 date: 2026-01-08 9:30:43
+permalink: /2026/01/08/ai-code-review-prompt/
 categories:
 - 学习
 ---

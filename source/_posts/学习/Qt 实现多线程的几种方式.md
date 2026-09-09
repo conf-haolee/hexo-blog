@@ -1,6 +1,7 @@
 ---
 title: Qt 实现多线程
 date: 2023-04-24
+permalink: /2023/04/24/qt-multithreading/
 tags: 
 - Qt
 - 多线程 

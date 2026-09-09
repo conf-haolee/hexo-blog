@@ -1,6 +1,7 @@
 ---
 title: 利用blender python自动渲染密封圈下落场景图片【bpy生成仿真图片数据集】
 date: 2024-11-20
+permalink: /2024/11/20/blender-seal-rendering-dataset/
 pin: false
 tags: 
 - blender

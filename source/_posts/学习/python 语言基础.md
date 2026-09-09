@@ -1,6 +1,7 @@
 ---
 title: python 语言基础
 date: 2021-10-15
+permalink: /2021/10/15/python-basics/
 tags: 
 - python
 - json 

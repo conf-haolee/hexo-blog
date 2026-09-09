@@ -3,6 +3,7 @@ title: C++程序命名规范
 tags: 
 - books
 date: 2023-04-12 20:39:43 
+permalink: /2023/04/12/cpp-naming-conventions/
 categories:
 - 学习
 ---

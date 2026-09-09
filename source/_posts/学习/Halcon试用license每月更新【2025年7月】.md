@@ -1,6 +1,7 @@
 ---
 title: Halcon试用license【每月更新2025年7月】
 date: 2024-11-20
+permalink: /2024/11/20/halcon-trial-license/
 pin: false
 tags: 
 - halcon

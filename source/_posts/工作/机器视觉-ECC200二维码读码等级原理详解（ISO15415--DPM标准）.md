@@ -1,6 +1,7 @@
 ---
 title: ECC200二维码读码等级原理详解（ISO15415 / DPM标准）
 date: 2026-03-14
+permalink: /2026/03/14/ecc200-iso15415/
 tags: 
 - 机器视觉
 - ECC200

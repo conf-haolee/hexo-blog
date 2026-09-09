@@ -1,6 +1,7 @@
 ---
 title: C++项目 实现word读写（二）
 date: 2023-05-23
+permalink: /2023/05/23/cpp-word-processing-project/
 tags: 
 - DuckX
 - minidocx
